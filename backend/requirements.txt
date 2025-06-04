@@ -1,0 +1,2 @@
+# requirements.txt
+# List your backend Python dependencies here (e.g., fastapi, pydantic, etc.) 
