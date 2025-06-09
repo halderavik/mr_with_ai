@@ -11,13 +11,13 @@ This platform enables users to upload market research data (SPSS, CSV, Excel), p
 
 ```mermaid
 graph TD
-    A[User (Browser)] -->|Upload Data, Chat, Confirm| B[Frontend (Next.js)]
-    B -->|API Calls| C[Backend (FastAPI)]
-    C -->|LLM Prompt| D[Deepseek/LLM]
-    C -->|Analysis| E[MCP Servers]
-    C -->|Data/Metadata| F[Data Storage]
+    A[User] -->|Upload/Chat/Confirm| B[Frontend]
+    B -->|API| C[Backend]
+    C -->|LLM| D[LLM]
+    C -->|Analysis| E[MCP]
+    C -->|Data| F[Storage]
     E -->|Results| C
-    D -->|Variable Mapping| C
+    D -->|Mapping| C
     C -->|Results| B
 ```
 
