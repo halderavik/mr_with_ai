@@ -1,2 +1,14 @@
-# requirements.txt
+fastapi==0.95.0
+uvicorn[standard]==0.22.0
+pandas==2.0.3
+pyreadstat==1.2.0
+matplotlib==3.8.0
+python-multipart==0.0.6
+pydantic>=1.6.2,<2.0.0  # Compatible with FastAPI 0.95.0
+numpy==1.24.3
+python-json-logger==2.0.7
+pytest==7.4.3
+httpx==0.25.2  # For testing FastAPI endpoints
+python-dotenv==1.0.0  # For loading environment variables
+
 # List your backend Python dependencies here (e.g., fastapi, pydantic, etc.) 

@@ -1,38 +1,33 @@
-# backend/app/services/data_loader.py
-
-import pandas as pd
-import pyreadstat
+import matplotlib.pyplot as plt
+import io
+import base64
 from pathlib import Path
-from ..services.file_handler import get_file_path
-from fastapi import HTTPException
+import uuid
 
-def load_dataset(user_id: str, dataset_id: str) -> pd.DataFrame:
+# directory where static charts will be saved
+BASE_CHART_DIR = Path(__file__).parent.parent / "static" / "charts"
+BASE_CHART_DIR.mkdir(parents=True, exist_ok=True)
+
+def save_matplotlib_figure(fig, prefix: str = "chart") -> str:
     """
-    Inspect the file extension; load using pyreadstat (for .sav) or pandas (for .csv/.xlsx).
-    Return a pandas DataFrame.
+    Save a matplotlib figure to disk under a unique PNG name.
+    Returns the relative URL (e.g. '/static/charts/xxx.png').
     """
-    filepath = get_file_path(user_id, dataset_id)
-    suffix = filepath.suffix.lower()
+    filename = f"{prefix}_{uuid.uuid4().hex[:8]}.png"
+    filepath = BASE_CHART_DIR / filename
+    fig.savefig(str(filepath), bbox_inches="tight")
+    plt.close(fig)
+    return f"/static/charts/{filename}"
 
-    if suffix == ".sav":
-        try:
-            df, meta = pyreadstat.read_sav(str(filepath))
-            return df
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error reading SPSS file: {e}")
-    elif suffix in {".csv"}:
-        try:
-            df = pd.read_csv(str(filepath))
-            return df
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error reading CSV file: {e}")
-    elif suffix in {".xls", ".xlsx"}:
-        try:
-            df = pd.read_excel(str(filepath))
-            return df
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error reading Excel file: {e}")
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported file extension.")
-
-# Logic for generating plots and visualizations 
+def fig_to_base64(fig) -> str:
+    """
+    Convert a matplotlib figure into a base64‐encoded data URI.
+    Frontend can embed this directly into an <img src="...">.
+    """
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    img_bytes = buf.read()
+    b64 = base64.b64encode(img_bytes).decode("utf-8")
+    plt.close(fig)
+    return f"data:image/png;base64,{b64}"

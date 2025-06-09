@@ -8,10 +8,11 @@ class ChatRequest(BaseModel):
     message: str
     filter_column: Optional[str] = None
     filter_value: Optional[Any] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class ChatResponse(BaseModel):
-    reply: str                                        # The agent’s textual answer
+    reply: str                                        # The agent's textual answer
     analysis_tables: Optional[Dict[str, Any]] = None  # Key: table_name, Value: table data (list of rows)
     chart_paths: Optional[Dict[str, str]] = None      # Key: chart_name, Value: file path or URL
     insights: Optional[str] = None

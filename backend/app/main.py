@@ -4,10 +4,18 @@
 
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from starlette.staticfiles import StaticFiles
 from typing import List, Dict, Any
+import logging
+import traceback
+import json
+import math
+import numpy as np
 
-from .config import UPLOAD_DIR
+from .config import UPLOAD_DIR, ALLOWED_ORIGINS, MAX_FILE_SIZE
 from .models.file_schemas import UploadResponse, PreviewRequest, PreviewResponse
 from .models.chat_schemas import ChatRequest, ChatResponse
 from .models.analysis_schemas import AnalysisRequest, AnalysisResponse
@@ -20,9 +28,65 @@ import pandas as pd
 import pyreadstat
 from pathlib import Path
 
-app = FastAPI(title="MarketPro Backend")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Mount /static so that chart PNGs (and future assets) are served:
+class CustomJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle special float values and numpy types."""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+def safe_json_serialize(obj: Any) -> Any:
+    """
+    Safely serialize an object to JSON-compatible format.
+    Handles numpy types, NaN, and infinity values.
+    """
+    if isinstance(obj, dict):
+        return {k: safe_json_serialize(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [safe_json_serialize(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.floating)):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return float(obj) if isinstance(obj, np.floating) else int(obj)
+    elif isinstance(obj, np.ndarray):
+        return safe_json_serialize(obj.tolist())
+    return obj
+
+# Initialize FastAPI app with metadata
+app = FastAPI(
+    title="Market Pro API",
+    description="AI-Powered Market Research Analysis Platform",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
+
+# Add CORS middleware with proper configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS.split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"],  # For file downloads
+    max_age=3600,  # Cache preflight requests for 1 hour
+)
+
+# Mount static files
 app.mount("/static", StaticFiles(directory=str(UPLOAD_DIR.parent / "static")), name="static")
 
 agent_controller = AgentController()
@@ -30,126 +94,186 @@ agent_controller = AgentController()
 def get_current_user():
     return "user_demo"  # your real auth should replace this stub
 
-@app.post("/api/upload", response_model=UploadResponse)
+@app.get("/")
+async def root():
+    """
+    Root endpoint that provides basic API information and available endpoints.
+    """
+    return {
+        "name": "Market Pro API",
+        "version": "1.0.0",
+        "description": "AI-Powered Market Research Analysis Platform",
+        "endpoints": {
+            "documentation": "/docs",
+            "upload": "/api/upload",
+            "preview": "/api/preview",
+            "chat": "/api/chat",
+            "analyze": "/api/analyze"
+        }
+    }
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for monitoring.
+    """
+    return {
+        "status": "healthy",
+        "version": "1.0.0"
+    }
+
+def extract_spss_metadata(meta: pyreadstat.metadata_container) -> dict:
+    """
+    Return a JSON-serializable dict of SPSS metadata.
+    Grabs named fields if present, plus a full_meta_dict of everything.
+    """
+    try:
+        # 1) Copy raw __dict__ and sanitize it
+        raw_meta = meta.__dict__.copy()
+        safe_full = jsonable_encoder(raw_meta)
+
+        # 2) Build result from only the attributes that exist
+        named = {}
+        for attr in (
+            "column_names",
+            "column_labels",
+            "variable_value_labels",
+            "value_labels",
+            "variable_measure",
+            "missing_ranges",
+            "missing_user_ranges",
+            "file_label",
+            "file_encoding",
+            "number_rows",
+            "number_columns",
+        ):
+            if hasattr(meta, attr):
+                named[attr] = jsonable_encoder(getattr(meta, attr))
+
+        # 3) Merge
+        named["full_meta_dict"] = safe_full
+        return named
+    except Exception as e:
+        logger.error(f"Error in extract_spss_metadata: {str(e)}")
+        # Fall back to just the full metadata dict
+        return {"full_meta_dict": jsonable_encoder(meta.__dict__.copy())}
+
+@app.post("/api/upload")
 async def upload_data(
     file: UploadFile = File(...),
-    user_id: str = Depends(get_current_user)
+    current_user: str = Depends(get_current_user)
 ):
     """
-    Upload a .sav, .csv, or .xlsx file.
-    If .sav: read via pyreadstat to capture ALL metadata.
-    Return: dataset_id, filename, preview_rows (first 10), AND metadata.
+    Upload a data file (SPSS, CSV, Excel) and return preview + metadata.
     """
-    # 1. Save the raw file on disk under UPLOAD_DIR/<user_id>/
-    saved = save_uploaded_file(user_id, file)
-    dataset_id = saved["dataset_id"]
-    filepath = Path(saved["filepath"])
-    suffix = filepath.suffix.lower()
+    try:
+        logger.info(f"Received file upload request: {file.filename}")
+        
+        # Validate file size
+        file_size = 0
+        chunk_size = 1024 * 1024  # 1MB chunks
+        while chunk := await file.read(chunk_size):
+            file_size += len(chunk)
+            if file_size > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum size is {MAX_FILE_SIZE/1024/1024}MB"
+                )
+        await file.seek(0)  # Reset file pointer
+        
+        # Validate file extension
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in {".sav", ".csv", ".xlsx", ".xls"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type. Allowed types: .sav, .csv, .xlsx, .xls"
+            )
 
-    preview_rows = []
-    metadata_json: Dict[str, Any] = None
-
-    # 2. If SPSS (.sav), capture metadata + preview via pyreadstat
-    if suffix == ".sav":
-        try:
-            df, meta = pyreadstat.read_sav(str(filepath))  # load both data & metadata
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error reading SPSS file: {e}")
-
-        # 2a. Build preview (first 10 rows)
+        # Save the file and get dataset_id
+        logger.info("Saving uploaded file...")
+        result = save_uploaded_file(current_user, file)
+        dataset_id = result["dataset_id"]
+        
+        # Load the data for preview
+        logger.info("Loading dataset for preview...")
+        df = load_dataset(current_user, dataset_id)
+        
+        # Get preview rows and sanitize them
         preview_rows = df.head(10).fillna("").to_dict(orient="records")
-
-        # 2b. Convert **all** metadata fields to JSON
-        # We pull out public attributes of meta.__dict__ that are JSON‐serializable
-        # Typically: column_names, column_labels, variable_value_labels, value_labels, variable_measure, formats, missing_ranges, etc.
-        # So we do a safe __dict__ grab.
-        raw_meta_dict = meta.__dict__.copy()
-
-        # Some attributes inside __dict__ might still be not JSON‐serializable (e.g. numpy arrays),
-        # so let's convert them where needed. But in practice pyreadstat metadata attributes are simple Python dicts/lists.
-        # We'll trust that meta.__dict__ is JSON serializable.
-
-        # Build a “metadata_json” that includes these items plus a few named convenience fields:
-        metadata_json = {
-            "column_names": meta.column_names,
-            "column_labels": meta.column_labels,
-            "variable_value_labels": meta.variable_value_labels,
-            "value_labels": meta.value_labels,
-            "variable_measure": meta.variable_measure,
-            "formats": meta.formats,
-            "number_rows": meta.number_rows,
-            "file_label": meta.file_label,
-            "file_encoding": meta.file_encoding,
-            # If you want literally everything: just include raw_meta_dict verbatim:
-            "full_meta_dict": raw_meta_dict
-        }
-
-    else:
-        # 3. If CSV/XLSX: load via pandas, preview only; metadata remains None
-        try:
-            if suffix == ".csv":
-                df = pd.read_csv(str(filepath))
-            else:
-                df = pd.read_excel(str(filepath))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
-
-        preview_rows = df.head(10).fillna("").to_dict(orient="records")
+        safe_preview = jsonable_encoder(preview_rows)
+        
+        # For SPSS files, get metadata
         metadata_json = None
+        if file_ext == ".sav":
+            try:
+                logger.info("Extracting SPSS metadata...")
+                _, meta = pyreadstat.read_sav(str(result["filepath"]))
+                metadata_json = extract_spss_metadata(meta)
+                logger.info("SPSS metadata extracted successfully")
+            except Exception as e:
+                logger.error(f"Error reading SPSS metadata: {str(e)}")
+                logger.error(traceback.format_exc())
+                # Don't raise an exception, just log the error and continue
+                metadata_json = {"error": str(e)}
+        
+        # Return via JSONResponse to bypass Pydantic model serialization
+        logger.info("Upload completed successfully")
+        return JSONResponse(
+            content={
+                "dataset_id": dataset_id,
+                "filename": file.filename,
+                "preview_rows": safe_preview,
+                "metadata": metadata_json
+            }
+        )
+    except HTTPException as he:
+        logger.error(f"HTTP Exception during upload: {str(he)}")
+        raise he
+    except Exception as e:
+        logger.error(f"Unexpected error during upload: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
-    return UploadResponse(
-        dataset_id=dataset_id,
-        filename=file.filename,
-        preview_rows=preview_rows,
-        metadata=metadata_json
-    )
-
-
-@app.post("/api/preview", response_model=PreviewResponse)
-async def get_preview(
+@app.post("/api/preview")
+async def preview_data(
     req: PreviewRequest,
-    user_id: str = Depends(get_current_user)
+    current_user: str = Depends(get_current_user)
 ):
     """
-    After upload, if user wants to re‐preview the data, return
-    first 10 rows and (if SPSS) the stored metadata. 
+    Get preview of dataset with metadata.
     """
-    df = load_dataset(user_id, req.dataset_id)
-    preview_rows = df.head(10).fillna("").to_dict(orient="records")
-
-    # Attempt to re‐extract metadata if needed:
-    # If it was a SPSS upload, load metadata again
-    from .services.file_handler import get_file_path
-    from pathlib import Path
-    file_path = Path(get_file_path(user_id, req.dataset_id))
-    suffix = file_path.suffix.lower()
-    metadata_json = None
-
-    if suffix == ".sav":
-        # Read JUST the metadata (no need to re‐load df again, but pyreadstat can't read metadata‐only out of the box)
-        # So we do a quick read for meta:
-        _, meta = pyreadstat.read_sav(str(file_path), metadataonly=True)
-        raw_meta_dict = meta.__dict__.copy()
-        metadata_json = {
-            "column_names": meta.column_names,
-            "column_labels": meta.column_labels,
-            "variable_value_labels": meta.variable_value_labels,
-            "value_labels": meta.value_labels,
-            "variable_measure": meta.variable_measure,
-            "formats": meta.formats,
-            "number_rows": meta.number_rows,
-            "file_label": meta.file_label,
-            "file_encoding": meta.file_encoding,
-            "full_meta_dict": raw_meta_dict
-        }
-
-    return PreviewResponse(
-        filename=req.dataset_id,
-        columns=list(df.columns),
-        preview_rows=preview_rows,
-        metadata=metadata_json
-    )
-
+    try:
+        # Load the dataset
+        df = load_dataset(current_user, req.dataset_id)
+        
+        # Get preview rows and sanitize them
+        preview_rows = df.head(10).fillna("").to_dict(orient="records")
+        safe_preview = jsonable_encoder(preview_rows)
+        
+        # Get metadata if available
+        metadata_json = None
+        file_path = get_file_path(current_user, req.dataset_id)
+        if file_path.suffix.lower() == ".sav":
+            try:
+                _, meta = pyreadstat.read_sav(str(file_path), metadataonly=True)
+                metadata_json = extract_spss_metadata(meta)
+            except Exception as e:
+                logger.warning(f"Could not read SPSS metadata: {str(e)}")
+                metadata_json = {"error": str(e)}
+        
+        # Return via JSONResponse to bypass Pydantic model serialization
+        return JSONResponse(
+            content={
+                "filename": req.dataset_id,
+                "columns": list(df.columns),
+                "preview_rows": safe_preview,
+                "metadata": metadata_json
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in preview: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(
@@ -157,7 +281,6 @@ async def chat_endpoint(
     user_id: str = Depends(get_current_user)
 ):
     return agent_controller.handle_chat(user_id, chat_req)
-
 
 @app.post("/api/analyze", response_model=AnalysisResponse)
 async def analyze_endpoint(
@@ -189,7 +312,6 @@ async def analyze_endpoint(
         insights=result.get("insights", ""),
         message="Analysis completed."
     )
-
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
