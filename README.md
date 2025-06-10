@@ -43,6 +43,8 @@ A modern web application for analyzing market research data, with a focus on SPS
   - Tabbed interface
   - Loading states
   - Error handling
+  - Real-time visualization updates
+  - Interactive charts and tables
 
 ## Tech Stack
 
@@ -61,6 +63,25 @@ A modern web application for analyzing market research data, with a focus on SPS
 - Pyreadstat (for SPSS files)
 - SQLAlchemy
 - Pydantic
+- Matplotlib (for visualization generation)
+
+## Architecture
+
+### MCP (Market Research Control Protocol) Architecture
+- Modular analysis engines that generate and push visualizations
+- Each MCP is responsible for:
+  - Data validation and preprocessing
+  - Analysis execution
+  - Visualization generation
+  - Results formatting
+  - Pushing visualizations to frontend
+
+### Visualization Pipeline
+1. MCP generates visualizations using matplotlib
+2. Visualizations are converted to base64-encoded PNG
+3. Results are sent to frontend via API
+4. Frontend displays visualizations in real-time
+5. Interactive features (zoom, pan, export) available
 
 ## Prerequisites
 
@@ -123,6 +144,7 @@ ai_mr_v0/
 │   │   ├── main.py
 │   │   ├── models/
 │   │   ├── services/
+│   │   ├── mcp/           # Market Research Control Protocol servers
 │   │   └── utils/
 │   ├── tests/
 │   └── requirements.txt
@@ -195,73 +217,24 @@ Upload a data file for analysis.
 }
 ```
 
-**Status Codes:**
-- `200 OK`: File uploaded successfully
-- `400 Bad Request`: Invalid file type or size
-- `413 Payload Too Large`: File size exceeds limit
-- `500 Internal Server Error`: Server-side error
-
-**Error Response:**
-```json
-{
-  "detail": "Error message"
-}
-```
-
-#### 2. Data Preview
+#### 2. Chat Analysis
 ```http
-GET /api/preview/{dataset_id}
+POST /api/chat
 ```
 
-Get a preview of the uploaded dataset.
+Request analysis via chat interface.
 
-**Parameters:**
-- `dataset_id` (path parameter): ID of the dataset to preview
-
-**Response:**
+**Request Body:**
 ```json
 {
   "dataset_id": "string",
-  "filename": "string",
-  "preview_rows": [
-    {
-      "column1": "value1",
-      "column2": "value2"
-    }
-  ],
-  "metadata": {
-    "column_names": ["string"],
-    "column_labels": ["string"],
-    "value_labels": {
-      "column1": {
-        "value1": "label1"
-      }
-    }
-  }
-}
-```
-
-**Status Codes:**
-- `200 OK`: Preview retrieved successfully
-- `404 Not Found`: Dataset not found
-- `500 Internal Server Error`: Server-side error
-
-#### 3. Dataset Analysis
-```http
-POST /api/analyze/{dataset_id}
-```
-
-Analyze the uploaded dataset.
-
-**Parameters:**
-- `dataset_id` (path parameter): ID of the dataset to analyze
-
-**Request Body:**
-```json
-{
-  "analysis_type": "string",
-  "parameters": {
-    "key": "value"
+  "message": "string",
+  "conversation_context": {
+    "messages": [],
+    "current_analysis_type": "string",
+    "variables_used": ["string"],
+    "last_question": "string",
+    "last_answer": "string"
   }
 }
 ```
@@ -269,130 +242,36 @@ Analyze the uploaded dataset.
 **Response:**
 ```json
 {
-  "analysis_id": "string",
-  "status": "string",
-  "results": {
-    "summary": {
-      "total_rows": 0,
-      "total_columns": 0,
-      "missing_values": 0
-    },
-    "statistics": {
-      "column1": {
-        "mean": 0,
-        "median": 0,
-        "mode": "value",
-        "std_dev": 0
+  "reply": "string",
+  "visualizations": {
+    "charts": [
+      {
+        "type": "string",
+        "title": "string",
+        "data": {},
+        "plot_data": "string"  // Base64 encoded PNG
       }
-    }
+    ],
+    "tables": [
+      {
+        "type": "string",
+        "title": "string",
+        "data": [
+          {
+            "metric": "string",
+            "value": "string"
+          }
+        ]
+      }
+    ]
+  },
+  "insights": "string",
+  "context": {
+    "analysis_type": "string",
+    "variables_used": ["string"]
   }
 }
 ```
-
-**Status Codes:**
-- `200 OK`: Analysis completed successfully
-- `400 Bad Request`: Invalid analysis parameters
-- `404 Not Found`: Dataset not found
-- `500 Internal Server Error`: Server-side error
-
-#### 4. Van Westendorp Analysis
-```http
-POST /api/analyze/{dataset_id}/van-westendorp
-```
-
-Run a Van Westendorp price sensitivity analysis on the dataset.
-
-**Parameters:**
-- `dataset_id` (path parameter): ID of the dataset to analyze
-
-**Request Body:**
-```json
-{
-  "too_cheap": "column_name",
-  "bargain": "column_name",
-  "getting_expensive": "column_name",
-  "too_expensive": "column_name"
-}
-```
-
-**Response:**
-```json
-{
-  "price_points": {
-    "pmc": 0.0,
-    "pme": 0.0,
-    "opp": 0.0,
-    "price_sensitivity": 0.0
-  },
-  "curves": {
-    "price_grid": [0.0],
-    "too_cheap": [0.0],
-    "too_expensive": [0.0],
-    "bargain": [0.0],
-    "getting_expensive": [0.0]
-  },
-  "insights": "string"
-}
-```
-
-**Status Codes:**
-- `200 OK`: Analysis completed successfully
-- `400 Bad Request`: Invalid column mapping
-- `404 Not Found`: Dataset not found
-- `500 Internal Server Error`: Server-side error
-
-### Rate Limiting
-- Maximum file size: 100MB
-- Maximum concurrent uploads: 5
-- Rate limit: 100 requests per minute
-
-### Error Handling
-All error responses follow this format:
-```json
-{
-  "detail": "Error message",
-  "code": "ERROR_CODE",
-  "timestamp": "ISO-8601 timestamp"
-}
-```
-
-Common error codes:
-- `INVALID_FILE_TYPE`: Unsupported file format
-- `FILE_TOO_LARGE`: File exceeds size limit
-- `DATASET_NOT_FOUND`: Dataset ID not found
-- `INVALID_ANALYSIS_TYPE`: Unsupported analysis type
-- `SERVER_ERROR`: Internal server error
-
-### WebSocket Events
-The API also supports real-time updates via WebSocket:
-
-```http
-WS /ws/analysis/{analysis_id}
-```
-
-**Events:**
-- `analysis_started`: Analysis has begun
-- `analysis_progress`: Progress update
-- `analysis_completed`: Analysis finished
-- `analysis_error`: Error occurred
-
-**Example WebSocket Message:**
-```json
-{
-  "event": "analysis_progress",
-  "data": {
-    "progress": 50,
-    "status": "Processing data"
-  }
-}
-```
-
-### CORS Configuration
-The API supports CORS with the following configuration:
-- Allowed Origins: `http://localhost:3000`
-- Allowed Methods: GET, POST, OPTIONS
-- Allowed Headers: Content-Type, Authorization
-- Max Age: 3600 seconds
 
 ## Development
 
@@ -401,12 +280,14 @@ The API supports CORS with the following configuration:
 - Use type hints
 - Write docstrings for all functions
 - Create unit tests for new features
+- Ensure MCPs generate and push visualizations correctly
 
 ### Frontend Development
 - Use TypeScript for type safety
 - Follow component-based architecture
 - Use Tailwind CSS for styling
 - Implement responsive design
+- Handle visualization updates in real-time
 
 ## Testing
 
@@ -443,4 +324,5 @@ For support, please open an issue in the GitHub repository or contact the mainta
 - Pyreadstat for SPSS file support
 - FastAPI for the backend framework
 - Next.js for the frontend framework
-- Shadcn UI for the component library 
+- Shadcn UI for the component library
+- Matplotlib for visualization generation 

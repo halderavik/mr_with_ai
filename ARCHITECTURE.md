@@ -16,9 +16,9 @@ graph TD
     C -->|LLM| D[LLM]
     C -->|Analysis| E[MCP]
     C -->|Data| F[Storage]
-    E -->|Results| C
+    E -->|Visualizations| C
     D -->|Mapping| C
-    C -->|Results| B
+    C -->|Results + Visualizations| B
 ```
 
 ---
@@ -30,6 +30,7 @@ graph TD
 - **Data Preview:** Shows preview and metadata after upload.
 - **Chat Interface:** User requests analysis, confirms variable mapping, and receives results.
 - **Interactive Results:** Displays charts, tables, and insights.
+- **Real-time Visualization:** Updates visualizations as they are pushed from MCPs.
 
 ### 2. Backend (FastAPI)
 - **API Layer:** Handles file upload, analysis requests, and chat.
@@ -39,11 +40,13 @@ graph TD
 - **MCP Servers:** Modular analysis engines that:
     - Use LLM-proposed variable mapping
     - Ask user for confirmation if needed
-    - Run analysis and return results
+    - Run analysis and generate visualizations
+    - Push visualizations to frontend
     - Currently implemented:
         - VanWestendorpMCP: Price sensitivity analysis
             - Calculates PMC, PME, and OPP
-            - Generates price sensitivity curves
+            - Generates price sensitivity curves using matplotlib
+            - Converts plots to base64-encoded PNG
             - Provides detailed insights
             - Handles data validation and filtering
             - Supports interactive visualization
@@ -55,7 +58,31 @@ graph TD
 4. **LLM Variable Mapping:** Backend uses LLM to propose variable mapping
 5. **User Confirmation:** User confirms/edits mapping via chat
 6. **Analysis Execution:** MCP server runs analysis with confirmed mapping
-7. **Results:** Backend returns results (tables, charts, insights) to frontend
+7. **Visualization Generation:** MCP generates plots using matplotlib
+8. **Results Push:** MCP sends visualizations and results to frontend
+9. **Display:** Frontend updates UI with new visualizations
+
+---
+
+## Visualization Pipeline
+
+```mermaid
+sequenceDiagram
+    participant MCP
+    participant Backend
+    participant Frontend
+    MCP->>MCP: Generate plot using matplotlib
+    MCP->>MCP: Convert to base64 PNG
+    MCP->>Backend: Send visualization data
+    Backend->>Frontend: Push visualization
+    Frontend->>Frontend: Update UI
+```
+
+1. **Generation:** MCP creates visualization using matplotlib
+2. **Conversion:** Plot is converted to base64-encoded PNG
+3. **Transmission:** Visualization data is sent to frontend
+4. **Display:** Frontend renders visualization in real-time
+5. **Interaction:** User can interact with visualization (zoom, pan, export)
 
 ---
 
@@ -66,6 +93,7 @@ graph TD
 - **Extensibility:** Supports new file types, LLMs, and analysis modules.
 - **Data Quality:** Robust validation and filtering of input data.
 - **Performance:** Efficient processing of large datasets.
+- **Visualization:** Real-time updates and interactive features.
 
 ---
 
@@ -81,8 +109,9 @@ graph TD
     - Validates input data
     - Filters for complete responses
     - Calculates price points (PMC, PME, OPP)
-    - Generates sensitivity curves
-    - Returns results with insights
+    - Generates sensitivity curves using matplotlib
+    - Converts plots to base64 PNG
+    - Returns results with visualizations
 6. **Frontend displays results** (charts, tables, insights)
 
 ---
@@ -91,7 +120,8 @@ graph TD
 - **Frontend:** Next.js, React, Tailwind CSS
 - **Backend:** FastAPI, Pydantic, Uvicorn
 - **AI/LLM:** Deepseek (or pluggable LLM)
-- **Data Analysis:** Pandas, Numpy, Matplotlib
+- **Data Analysis:** Pandas, Numpy
+- **Visualization:** Matplotlib
 - **File Support:** SPSS (pyreadstat), CSV, Excel
 
 ---
@@ -100,6 +130,7 @@ graph TD
 - **Add new MCP:** Create a new MCP class in `backend/app/mcp/` and register it.
 - **Add new analysis type:** Update LLM prompt and frontend options.
 - **Swap LLM:** Replace Deepseek integration in Agent Controller.
+- **Add visualization:** Implement matplotlib plotting in MCP.
 
 ---
 
@@ -123,8 +154,9 @@ sequenceDiagram
     U->>F: Confirm mapping
     F->>B: POST /api/chat (confirmed mapping)
     B->>M: Run analysis
-    M-->>B: Results
-    B->>F: Results (charts, tables, insights)
+    M->>M: Generate visualization
+    M-->>B: Results + visualization
+    B->>F: Push results and visualization
     F->>U: Display results
 ```
 
