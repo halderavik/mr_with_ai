@@ -36,10 +36,17 @@ graph TD
 - **Data Loader:** Loads data and extracts metadata (esp. for SPSS).
 - **Agent Controller:** Orchestrates analysis requests, LLM prompts, and MCP server calls.
 - **LLM Integration:** Uses Deepseek (or other LLM) to interpret variable descriptions and propose mappings.
-- **MCP Servers:** Modular analysis engines (e.g., VanWestendorpMCP) that:
+- **MCP Servers:** Modular analysis engines that:
     - Use LLM-proposed variable mapping
     - Ask user for confirmation if needed
     - Run analysis and return results
+    - Currently implemented:
+        - VanWestendorpMCP: Price sensitivity analysis
+            - Calculates PMC, PME, and OPP
+            - Generates price sensitivity curves
+            - Provides detailed insights
+            - Handles data validation and filtering
+            - Supports interactive visualization
 
 ### 3. Data Flow
 1. **Upload:** User uploads data file → Backend extracts data + metadata
@@ -57,6 +64,8 @@ graph TD
 - **Explainability:** LLM explains variable mapping and analysis steps to the user.
 - **Interactivity:** User confirms variable mapping before analysis runs.
 - **Extensibility:** Supports new file types, LLMs, and analysis modules.
+- **Data Quality:** Robust validation and filtering of input data.
+- **Performance:** Efficient processing of large datasets.
 
 ---
 
@@ -68,7 +77,12 @@ graph TD
     - Proposes mapping to user via chat
     - Waits for user confirmation
 4. **User confirms mapping**
-5. **MCP runs analysis** and returns results
+5. **VanWestendorpMCP**:
+    - Validates input data
+    - Filters for complete responses
+    - Calculates price points (PMC, PME, OPP)
+    - Generates sensitivity curves
+    - Returns results with insights
 6. **Frontend displays results** (charts, tables, insights)
 
 ---

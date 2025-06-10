@@ -105,16 +105,12 @@ class VanWestendorpMCP(MCPBase):
                     key = key.strip().lower()
                     value = value.strip()
                     if key in ["too_cheap", "bargain", "getting_expensive", "too_expensive"]:
-                        # Verify the key exists in actual_column_labels
-                        if value in actual_column_labels:
-                            col_map[key] = value
-                            print(f"[DEBUG] Found match for {key}: {value} -> {actual_column_labels[value]}")
-                        else:
-                            print(f"[WARNING] Key '{value}' not found in column labels")
-                            col_map[key] = None
+                        # Store the question number directly
+                        col_map[key] = value
+                        print(f"[DEBUG] Found match for {key}: {value}")
             
             print("[DEBUG] Parsed column mapping:", col_map)
-            print("[DEBUG] Available column labels:", list(actual_column_labels.keys()))
+            print("[DEBUG] Available DataFrame columns:", list(data.columns))
 
             # 4. Fallback to params or default mapping if LLM mapping is incomplete
             if params.get("column_map"):
@@ -123,133 +119,148 @@ class VanWestendorpMCP(MCPBase):
             else:
                 default_map = {k: v for k, v in col_map.items() if k in ["too_cheap", "bargain", "getting_expensive", "too_expensive"]}
 
-        # 5. If not confirmed, return mapping for user confirmation
-        if not params.get("confirmed"):
-            return {
-                "needs_confirmation": True,
-                "proposed_mapping": default_map,
-                "message": (
-                    "I have analyzed your data and propose the following variable mapping for the Van Westendorp analysis. "
-                    "Please confirm or edit the mapping before proceeding:",
-                    default_map
+            # 5. Extract data using the question numbers
+            print("[DEBUG] Extracting data using question numbers...")
+            
+            # First, create a mask for respondents who answered all questions
+            valid_respondents = data[list(default_map.values())].notna().all(axis=1)
+            print(f"\n[DEBUG] Total respondents: {len(data)}")
+            print(f"[DEBUG] Respondents with all questions answered: {valid_respondents.sum()}")
+            
+            # Filter data for valid respondents
+            filtered_data = data[valid_respondents]
+            print(f"[DEBUG] Using {len(filtered_data)} respondents for analysis")
+            
+            price_data = {}
+            for key, question_num in default_map.items():
+                if question_num in filtered_data.columns:
+                    # Get the raw data for valid respondents
+                    raw_data = filtered_data[question_num]
+                    print(f"\n[DEBUG] Raw data for {key} ({question_num}):")
+                    print(f"First 20 rows: {raw_data.head(20).tolist()}")
+                    print(f"Data type: {raw_data.dtype}")
+                    print(f"Number of values: {len(raw_data)}")
+                    
+                    # Convert to float
+                    try:
+                        price_data[key] = raw_data.astype(float).values
+                    except ValueError as e:
+                        print(f"[WARNING] Direct conversion failed for {key}: {e}")
+                        # Try cleaning the data first
+                        cleaned_data = raw_data.str.replace('$', '').str.replace(',', '').astype(float)
+                        price_data[key] = cleaned_data.values
+                    
+                    print(f"[DEBUG] Processed data for {key}:")
+                    print(f"Number of values: {len(price_data[key])}")
+                    print(f"First 10 values: {price_data[key][:10]}")
+                    print(f"Min value: {min(price_data[key])}")
+                    print(f"Max value: {max(price_data[key])}")
+                    print(f"Mean value: {np.mean(price_data[key])}")
+                else:
+                    print(f"[ERROR] Question number {question_num} not found in DataFrame columns")
+                    raise ValueError(f"Required column '{question_num}' for '{key}' not found in data.")
+
+            # 6. Run Van Westendorp analysis
+            print("\n[DEBUG] Running Van Westendorp analysis...")
+            p_tc = price_data["too_cheap"]
+            p_ba = price_data["bargain"]
+            p_ge = price_data["getting_expensive"]
+            p_te = price_data["too_expensive"]
+
+            print("\n[DEBUG] Price arrays summary:")
+            print(f"Too Cheap: {len(p_tc)} values, range: [{min(p_tc)}, {max(p_tc)}]")
+            print(f"Bargain: {len(p_ba)} values, range: [{min(p_ba)}, {max(p_ba)}]")
+            print(f"Getting Expensive: {len(p_ge)} values, range: [{min(p_ge)}, {max(p_ge)}]")
+            print(f"Too Expensive: {len(p_te)} values, range: [{min(p_te)}, {max(p_te)}]")
+
+            # 7. Build Price Grid:
+            print("\n[DEBUG] Building price grid...")
+            all_prices = np.concatenate([p_tc, p_ba, p_ge, p_te])
+            min_price = np.min(all_prices)
+            max_price = np.max(all_prices)
+            print(f"[DEBUG] Price range: {min_price} to {max_price}")
+            
+            # Create a sorted unique price grid
+            price_step = (max_price - min_price) / 100  # Use 100 steps for better precision
+            price_grid = np.arange(min_price, max_price + price_step, price_step)
+            print(f"[DEBUG] Price grid size: {len(price_grid)}")
+            print(f"[DEBUG] Price grid range: {price_grid[0]} to {price_grid[-1]}")
+            
+            # 8. Calculate cumulative distributions
+            print("\n[DEBUG] Calculating cumulative distributions...")
+            n = len(p_tc)  # Number of respondents
+            print(f"[DEBUG] Number of respondents: {n}")
+            
+            # Too Cheap curve (increasing)
+            tc_cum = np.array([np.sum(p_tc <= p) for p in price_grid]) / n * 100
+            # Too Expensive curve (decreasing)
+            te_cum = np.array([np.sum(p_te <= p) for p in price_grid]) / n * 100
+            # Bargain curve (increasing)
+            ba_cum = np.array([np.sum(p_ba <= p) for p in price_grid]) / n * 100
+            # Getting Expensive curve (decreasing)
+            ge_cum = np.array([np.sum(p_ge <= p) for p in price_grid]) / n * 100
+            
+            print("[DEBUG] Cumulative distribution ranges:")
+            print(f"Too Cheap: {min(tc_cum):.1f}% to {max(tc_cum):.1f}%")
+            print(f"Too Expensive: {min(te_cum):.1f}% to {max(te_cum):.1f}%")
+            print(f"Bargain: {min(ba_cum):.1f}% to {max(ba_cum):.1f}%")
+            print(f"Getting Expensive: {min(ge_cum):.1f}% to {max(ge_cum):.1f}%")
+            
+            # 9. Find key price points
+            print("\n[DEBUG] Finding key price points...")
+            # Point of Marginal Cheapness (PMC): where too cheap = bargain
+            pmc_idx = np.argmin(np.abs(tc_cum - ba_cum))
+            pmc = price_grid[pmc_idx]
+            
+            # Point of Marginal Expensiveness (PME): where too expensive = getting expensive
+            pme_idx = np.argmin(np.abs(te_cum - ge_cum))
+            pme = price_grid[pme_idx]
+            
+            # Optimal Price Point (OPP): where acceptable = expensive
+            # Calculate acceptable range (between PMC and PME)
+            acceptable_range = (price_grid >= pmc) & (price_grid <= pme)
+            if np.any(acceptable_range):
+                opp_idx = np.argmin(np.abs(ba_cum[acceptable_range] - ge_cum[acceptable_range]))
+                opp = price_grid[acceptable_range][opp_idx]
+            else:
+                opp = (pmc + pme) / 2
+                print("[WARNING] No acceptable price range found, using midpoint")
+            
+            print("[DEBUG] Key price points:")
+            print(f"PMC: ${pmc:.2f}")
+            print(f"PME: ${pme:.2f}")
+            print(f"OPP: ${opp:.2f}")
+            
+            # 10. Calculate price sensitivity
+            price_sensitivity = (pme - pmc) / pmc * 100
+            
+            # 11. Build results
+            results = {
+                "price_points": {
+                    "pmc": float(pmc),
+                    "pme": float(pme),
+                    "opp": float(opp),
+                    "price_sensitivity": float(price_sensitivity)
+                },
+                "curves": {
+                    "price_grid": price_grid.tolist(),
+                    "too_cheap": tc_cum.tolist(),
+                    "too_expensive": te_cum.tolist(),
+                    "bargain": ba_cum.tolist(),
+                    "getting_expensive": ge_cum.tolist()
+                },
+                "insights": (
+                    f"Using {n} respondents, the Van Westendorp analysis yields:\n"
+                    f"• Point of Marginal Cheapness (PMC): ${pmc:.2f}\n"
+                    f"• Point of Marginal Expensiveness (PME): ${pme:.2f}\n"
+                    f"• Optimal Price (where acceptable = expensive): ${opp:.2f}\n"
+                    f"The acceptable price range (between PMC and PME) suggests that most respondents "
+                    f"find prices between ${pmc:.2f} and ${pme:.2f} acceptable. "
+                    f"Above PME, more respondents consider the product too expensive."
                 )
             }
-
-        # 6. Proceed with analysis if confirmed
-        # Ensure all required columns are present
-        # Resolve col_map values to actual DataFrame columns if they are labels
-        resolved_col_map = {}
-        for k, v in default_map.items():
-            if v in data.columns:
-                resolved_col_map[k] = v
-            elif column_labels and isinstance(column_labels, dict) and "column_labels" in column_labels:
-                # Try to map label back to column name
-                for col, label in column_labels["column_labels"].items():
-                    if v == label and col in data.columns:
-                        resolved_col_map[k] = col
-                        break
-                else:
-                    resolved_col_map[k] = None
-            else:
-                resolved_col_map[k] = None
-
-        print("[DEBUG] Final resolved column mapping for Van Westendorp:", resolved_col_map)
-
-        # Ensure all required columns are present
-        for key, colname in resolved_col_map.items():
-            if not colname or colname not in data.columns:
-                raise ValueError(f"Required column '{colname}' for '{key}' not found in data.")
-
-        # Extract the four price arrays using resolved mapping
-        p_tc = data[resolved_col_map["too_cheap"]].astype(float).dropna().values
-        p_ba = data[resolved_col_map["bargain"]].astype(float).dropna().values
-        p_ge = data[resolved_col_map["getting_expensive"]].astype(float).dropna().values
-        p_te = data[resolved_col_map["too_expensive"]].astype(float).dropna().values
-
-        # 7. Build Price Grid:
-        all_prices = np.concatenate([p_tc, p_ba, p_ge, p_te])
-        # Create a sorted unique price grid (e.g. from min to max, step = 0.01 of range):
-        price_grid = np.linspace(all_prices.min(), all_prices.max(), 200)
-
-        # 8. Compute cumulative distributions:
-        # For each price in grid, compute:
-        #   % respondents saying "too cheap" <= price (i.e. they think it's no longer "too cheap")
-        #   % respondents saying "bargain" <= price (i.e. they consider price acceptable)
-        #   % respondents saying "getting expensive" <= price
-        #   % respondents saying "too expensive" <= price
-        cum_tc = [np.mean(p_tc < x) for x in price_grid]
-        cum_ba = [np.mean(p_ba < x) for x in price_grid]
-        cum_ge = [np.mean(p_ge < x) for x in price_grid]
-        cum_te = [np.mean(p_te < x) for x in price_grid]
-
-        # Convert to numpy arrays:
-        cum_tc = np.array(cum_tc)
-        cum_ba = np.array(cum_ba)
-        cum_ge = np.array(cum_ge)
-        cum_te = np.array(cum_te)
-
-        # 9. Find intersection points:
-        #   - Point of Marginal Cheapness = intersection of "too_cheap" & "getting_expensive"
-        #   - Point of Marginal Expensiveness = intersection of "bargain" & "too_expensive"
-        #   - Optimal Price = intersection of "getting_expensive" & "bargain" (the P*).
-        def find_intersection(x_vals, y1, y2):
-            # Find x where |y1 - y2| is minimized
-            idx = np.argmin(np.abs(y1 - y2))
-            return x_vals[idx]
-
-        try:
-            pmc = find_intersection(price_grid, cum_tc, cum_ge)
-            pme = find_intersection(price_grid, cum_ba, cum_te)
-            p_opt = find_intersection(price_grid, cum_ba, cum_ge)
-        except Exception:
-            pmc = pme = p_opt = None
-
-        # 10. Build a result table (for tabular output):
-        table = []
-        for i, price in enumerate(price_grid):
-            table.append({
-                "price": round(float(price), 2),
-                "% Not Too Cheap": round(float(cum_tc[i]*100), 1),
-                "% Acceptable (≤ Bargain)": round(float(cum_ba[i]*100), 1),
-                "% Getting Expensive": round(float(cum_ge[i]*100), 1),
-                "% Too Expensive": round(float(cum_te[i]*100), 1),
-            })
-
-        # 11. Create the Van Westendorp plot:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.plot(price_grid, cum_tc * 100, label="% Not Too Cheap", color="blue")
-        ax.plot(price_grid, cum_ba * 100, label="% Acceptable", color="green")
-        ax.plot(price_grid, cum_ge * 100, label="% Getting Expensive", color="orange")
-        ax.plot(price_grid, cum_te * 100, label="% Too Expensive", color="red")
-        ax.axvline(p_opt, linestyle="--", color="black", label=f"Opt Price = {p_opt:.2f}")
-        ax.axvline(pmc, linestyle=":", color="gray", label=f"PMC = {pmc:.2f}")
-        ax.axvline(pme, linestyle=":", color="brown", label=f"PME = {pme:.2f}")
-        ax.set_xlabel("Price")
-        ax.set_ylabel("Percent of Respondents (%)")
-        ax.set_title("Van Westendorp Price Sensitivity Curves")
-        ax.legend(loc="best")
-        fig.tight_layout()
-
-        # Convert figure to base64 for embedding:
-        chart_b64 = fig_to_base64(fig)
-
-        # 12. Build "insights" text:
-        n_resp = len(data)
-        insights = (
-            f"Using {n_resp} respondents, the Van Westendorp analysis yields:\n"
-            f"• Point of Marginal Cheapness (PMC): ${pmc:.2f}\n"
-            f"• Point of Marginal Expensiveness (PME): ${pme:.2f}\n"
-            f"• Optimal Price (where acceptable = expensive): ${p_opt:.2f}\n"
-            "The acceptable price range (between PMC and PME) suggests that most respondents\n"
-            f"find prices between ${pmc:.2f} and ${pme:.2f} acceptable.  "
-            "Above PME, more respondents consider the product too expensive."
-        )
-        print("[DEBUG] Van Westendorp Analysis Insights:", insights)
-
-        return {
-            "tables": {"van_westendorp_distribution": table},
-            "charts": {"van_westendorp_curve": chart_b64},
-            "insights": insights
-        }
+            
+            print("\n[DEBUG] Analysis complete")
+            return results
 
 # Logic for Van Westendorp price sensitivity analysis 

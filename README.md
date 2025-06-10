@@ -27,6 +27,16 @@ A modern web application for analyzing market research data, with a focus on SPS
   - Column widths
   - Column alignments
 
+- **Advanced Analysis**
+  - Van Westendorp Price Sensitivity Analysis
+    - Point of Marginal Cheapness (PMC)
+    - Point of Marginal Expensiveness (PME)
+    - Optimal Price Point (OPP)
+    - Price sensitivity curves
+    - Interactive visualizations
+    - Detailed insights and recommendations
+  - More analyses coming soon...
+
 - **Modern UI**
   - Clean, responsive design
   - Dark/light mode support
@@ -282,6 +292,52 @@ Analyze the uploaded dataset.
 **Status Codes:**
 - `200 OK`: Analysis completed successfully
 - `400 Bad Request`: Invalid analysis parameters
+- `404 Not Found`: Dataset not found
+- `500 Internal Server Error`: Server-side error
+
+#### 4. Van Westendorp Analysis
+```http
+POST /api/analyze/{dataset_id}/van-westendorp
+```
+
+Run a Van Westendorp price sensitivity analysis on the dataset.
+
+**Parameters:**
+- `dataset_id` (path parameter): ID of the dataset to analyze
+
+**Request Body:**
+```json
+{
+  "too_cheap": "column_name",
+  "bargain": "column_name",
+  "getting_expensive": "column_name",
+  "too_expensive": "column_name"
+}
+```
+
+**Response:**
+```json
+{
+  "price_points": {
+    "pmc": 0.0,
+    "pme": 0.0,
+    "opp": 0.0,
+    "price_sensitivity": 0.0
+  },
+  "curves": {
+    "price_grid": [0.0],
+    "too_cheap": [0.0],
+    "too_expensive": [0.0],
+    "bargain": [0.0],
+    "getting_expensive": [0.0]
+  },
+  "insights": "string"
+}
+```
+
+**Status Codes:**
+- `200 OK`: Analysis completed successfully
+- `400 Bad Request`: Invalid column mapping
 - `404 Not Found`: Dataset not found
 - `500 Internal Server Error`: Server-side error
 
