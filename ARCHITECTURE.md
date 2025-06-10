@@ -89,7 +89,7 @@ sequenceDiagram
 ## Key Design Principles
 - **Modularity:** Each analysis type is a separate MCP server; easy to add new analyses.
 - **Explainability:** LLM explains variable mapping and analysis steps to the user.
-- **Interactivity:** User confirms variable mapping before analysis runs.
+- **Interactivity:** User confirms or edits variable mapping in chat before analysis runs. The backend never leaves the MCP context until mapping is confirmed. Users can confirm with 'yes'/'confirm' or provide a new mapping in natural language.
 - **Extensibility:** Supports new file types, LLMs, and analysis modules.
 - **Data Quality:** Robust validation and filtering of input data.
 - **Performance:** Efficient processing of large datasets.

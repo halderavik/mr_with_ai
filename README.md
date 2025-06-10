@@ -36,6 +36,19 @@ A modern web application for analyzing market research data, with a focus on SPS
     - Interactive visualizations
     - Detailed insights and recommendations
   - More analyses coming soon...
+  - Van Westendorp Price Sensitivity Analysis
+    - Point of Marginal Cheapness (PMC)
+    - Point of Marginal Expensiveness (PME)
+    - Optimal Price Point (OPP)
+    - Price sensitivity curves
+    - Interactive visualizations
+    - Detailed insights and recommendations
+    - **Conversational variable mapping confirmation:**
+      - The backend proposes a variable mapping for required analysis variables (e.g., too_cheap, bargain, getting_expensive, too_expensive).
+      - The user must confirm or edit the mapping via chat before analysis runs.
+      - The AgentController and MCPs robustly handle this flow, ensuring the analysis only runs after confirmation.
+      - Users can confirm with 'yes'/'confirm' or provide a new mapping in natural language.
+  - More analyses coming soon...
 
 - **Modern UI**
   - Clean, responsive design
@@ -216,113 +229,3 @@ Upload a data file for analysis.
   }
 }
 ```
-
-#### 2. Chat Analysis
-```http
-POST /api/chat
-```
-
-Request analysis via chat interface.
-
-**Request Body:**
-```json
-{
-  "dataset_id": "string",
-  "message": "string",
-  "conversation_context": {
-    "messages": [],
-    "current_analysis_type": "string",
-    "variables_used": ["string"],
-    "last_question": "string",
-    "last_answer": "string"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "reply": "string",
-  "visualizations": {
-    "charts": [
-      {
-        "type": "string",
-        "title": "string",
-        "data": {},
-        "plot_data": "string"  // Base64 encoded PNG
-      }
-    ],
-    "tables": [
-      {
-        "type": "string",
-        "title": "string",
-        "data": [
-          {
-            "metric": "string",
-            "value": "string"
-          }
-        ]
-      }
-    ]
-  },
-  "insights": "string",
-  "context": {
-    "analysis_type": "string",
-    "variables_used": ["string"]
-  }
-}
-```
-
-## Development
-
-### Backend Development
-- Follow PEP 8 style guide
-- Use type hints
-- Write docstrings for all functions
-- Create unit tests for new features
-- Ensure MCPs generate and push visualizations correctly
-
-### Frontend Development
-- Use TypeScript for type safety
-- Follow component-based architecture
-- Use Tailwind CSS for styling
-- Implement responsive design
-- Handle visualization updates in real-time
-
-## Testing
-
-### Backend Tests
-```bash
-cd backend
-pytest
-```
-
-### Frontend Tests
-```bash
-cd frontend
-npm test
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Support
-
-For support, please open an issue in the GitHub repository or contact the maintainers.
-
-## Acknowledgments
-
-- Pyreadstat for SPSS file support
-- FastAPI for the backend framework
-- Next.js for the frontend framework
-- Shadcn UI for the component library
-- Matplotlib for visualization generation 

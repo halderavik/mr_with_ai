@@ -9,6 +9,8 @@ from .models.chat_schemas import ChatRequest, ChatResponse
 from .services.data_loader import load_dataset, load_metadata
 from .services.mcp_base import MCPBase
 import pandas as pd
+import json
+import re
 
 # === STEP 1: Real DeepSeek ChatModel using OpenAI SDK ===
 try:
@@ -98,11 +100,108 @@ class AgentController:
         if not self.mcp_mapping:
             print("[WARNING] No MCPs were registered in mcp_mapping! Check your MCP directory and class definitions.")
 
+    def _parse_mapping_from_text(self, text: str) -> dict:
+        """Parse a mapping from user text in the format 'too_cheap: Q1\nbargain: Q2...'"""
+        mapping = {}
+        for line in text.splitlines():
+            if ':' in line:
+                key, value = line.split(':', 1)
+                key = key.strip().lower()
+                value = value.strip()
+                if key in ["too_cheap", "bargain", "getting_expensive", "too_expensive"]:
+                    mapping[key] = value
+        return mapping if mapping else None
+
     def handle_chat(self, user_id: str, chat_req: ChatRequest) -> ChatResponse:
-        text = chat_req.message.lower()
+        text = chat_req.message.lower().strip()
         print("[DEBUG] AgentController received message:", text)
 
-        # Use Deepseek to classify the analysis type
+        context = chat_req.conversation_context
+        # 1. If context has a proposed mapping and not confirmed
+        if context and context.get('proposed_column_map') and not context.get('column_map_confirmed', False):
+            # a. If user replies 'yes' or 'confirm', proceed with analysis
+            if text in ["yes", "confirm"]:
+                analysis_key = context.get('analysis_type')
+                print(f"[DEBUG] User confirmed variable mapping. Using analysis_key: {analysis_key}")
+                if analysis_key not in self.mcp_mapping:
+                    return ChatResponse(reply=f"Analysis type '{analysis_key}' not found.")
+                df = load_dataset(user_id, chat_req.dataset_id)
+                metadata = load_metadata(user_id, chat_req.dataset_id)
+                params = {
+                    "column_map": context['proposed_column_map'],
+                    "column_map_confirmed": True,
+                    "metadata": metadata,
+                    "chat_model": self.chat_model
+                }
+                try:
+                    mcp: MCPBase = self.mcp_mapping[analysis_key]
+                    result = mcp.run(df, params)
+                    print(f"[DEBUG] MCP '{analysis_key}' run completed after confirmation.")
+                    print(f"[DEBUG] MCP result: {json.dumps(result, indent=2, default=str)}")
+                except Exception as e:
+                    print(f"[DEBUG] Error running MCP '{analysis_key}' after confirmation:", e)
+                    return ChatResponse(
+                        reply=f"Error running {analysis_key} analysis: {e}"
+                    )
+                chat_response = ChatResponse(
+                    reply=result.get("reply", "I apologize, but I couldn't generate a proper response."),
+                    analysis_tables=result.get("analysis_tables"),
+                    analysis_charts=result.get("analysis_charts"),
+                    insights=result.get("insights"),
+                    context=result.get("context"),
+                    visualizations=result.get("visualizations")
+                )
+                print(f"[DEBUG] ChatResponse.reply: {chat_response.reply}")
+                print(f"[DEBUG] ChatResponse.analysis_tables: {json.dumps(chat_response.analysis_tables, indent=2, default=str)}")
+                print(f"[DEBUG] ChatResponse.analysis_charts: {json.dumps(chat_response.analysis_charts, indent=2, default=str)}")
+                print(f"[DEBUG] ChatResponse.insights: {chat_response.insights}")
+                print(f"[DEBUG] ChatResponse.context: {json.dumps(chat_response.context, indent=2, default=str)}")
+                print(f"[DEBUG] ChatResponse.visualizations: {json.dumps(chat_response.visualizations, indent=2, default=str)}")
+                return chat_response
+            # b. If user replies with a mapping, parse and use it
+            mapping = self._parse_mapping_from_text(chat_req.message)
+            if mapping:
+                analysis_key = context.get('analysis_type')
+                print(f"[DEBUG] User provided new variable mapping. Using analysis_key: {analysis_key}")
+                if analysis_key not in self.mcp_mapping:
+                    return ChatResponse(reply=f"Analysis type '{analysis_key}' not found.")
+                df = load_dataset(user_id, chat_req.dataset_id)
+                metadata = load_metadata(user_id, chat_req.dataset_id)
+                params = {
+                    "column_map": mapping,
+                    "column_map_confirmed": True,
+                    "metadata": metadata,
+                    "chat_model": self.chat_model
+                }
+                try:
+                    mcp: MCPBase = self.mcp_mapping[analysis_key]
+                    result = mcp.run(df, params)
+                    print(f"[DEBUG] MCP '{analysis_key}' run completed after user mapping.")
+                    print(f"[DEBUG] MCP result: {json.dumps(result, indent=2, default=str)}")
+                except Exception as e:
+                    print(f"[DEBUG] Error running MCP '{analysis_key}' after user mapping:", e)
+                    return ChatResponse(
+                        reply=f"Error running {analysis_key} analysis: {e}"
+                    )
+                chat_response = ChatResponse(
+                    reply=result.get("reply", "I apologize, but I couldn't generate a proper response."),
+                    analysis_tables=result.get("analysis_tables"),
+                    analysis_charts=result.get("analysis_charts"),
+                    insights=result.get("insights"),
+                    context=result.get("context"),
+                    visualizations=result.get("visualizations")
+                )
+                print(f"[DEBUG] ChatResponse.reply: {chat_response.reply}")
+                print(f"[DEBUG] ChatResponse.analysis_tables: {json.dumps(chat_response.analysis_tables, indent=2, default=str)}")
+                print(f"[DEBUG] ChatResponse.analysis_charts: {json.dumps(chat_response.analysis_charts, indent=2, default=str)}")
+                print(f"[DEBUG] ChatResponse.insights: {chat_response.insights}")
+                print(f"[DEBUG] ChatResponse.context: {json.dumps(chat_response.context, indent=2, default=str)}")
+                print(f"[DEBUG] ChatResponse.visualizations: {json.dumps(chat_response.visualizations, indent=2, default=str)}")
+                return chat_response
+            # c. Otherwise, ask for clarification and DO NOT fall through to LLM classification
+            return ChatResponse(reply="Please confirm the mapping or provide a new one in the format: too_cheap: Q1\nbargain: Q2\ngetting_expensive: Q3\ntoo_expensive: Q4")
+
+        # 2. Otherwise, use LLM to classify analysis type as usual
         analysis_key = self._extract_analysis_type_with_deepseek(chat_req.message)
         print(f"[DEBUG] Deepseek classified analysis as: {analysis_key}")
 
@@ -127,24 +226,47 @@ class AgentController:
             mcp: MCPBase = self.mcp_mapping[analysis_key]
             result = mcp.run(df, params)
             print(f"[DEBUG] MCP '{analysis_key}' run completed.")
+            print(f"[DEBUG] MCP result: {json.dumps(result, indent=2, default=str)}")
         except Exception as e:
             print(f"[DEBUG] Error running MCP '{analysis_key}':", e)
             return ChatResponse(
                 reply=f"Error running {analysis_key} analysis: {e}"
             )
 
+        # Handle chat communication
+        chat_text = result.get("chat", "")
+        if not chat_text:
+            chat_text = f"Here are the results for your {analysis_key.replace('_',' ').title()} analysis."
+
+        # Handle insights
         insights = result.get("insights", "")
-        polished_insights = self.chat_model.generate_reply(insights)
-        reply_text = (
-            f"Here are the results for your {analysis_key.replace('_',' ').title()} analysis:\n\n"
-            f"{polished_insights}"
+        if insights:
+            # Polish insights using chat model
+            polished_insights = self.chat_model.generate_reply(
+                f"Please provide clear, business-focused insights based on this analysis: {insights}"
+            )
+        else:
+            polished_insights = ""
+
+        # Construct response
+        chat_response = ChatResponse(
+            reply=result.get("reply", "I apologize, but I couldn't generate a proper response."),
+            analysis_tables=result.get("analysis_tables"),
+            analysis_charts=result.get("analysis_charts"),
+            insights=polished_insights,
+            context=result.get("context"),
+            visualizations=result.get("visualizations")  # Add visualizations to response
         )
-        return ChatResponse(
-            reply=reply_text,
-            analysis_tables=result.get("tables", {}),
-            chart_paths=result.get("charts", {}),
-            insights=insights
-        )
+        
+        # Debug print the response
+        print(f"[DEBUG] ChatResponse.reply: {chat_response.reply}")
+        print(f"[DEBUG] ChatResponse.analysis_tables: {json.dumps(chat_response.analysis_tables, indent=2, default=str)}")
+        print(f"[DEBUG] ChatResponse.analysis_charts: {json.dumps(chat_response.analysis_charts, indent=2, default=str)}")
+        print(f"[DEBUG] ChatResponse.insights: {chat_response.insights}")
+        print(f"[DEBUG] ChatResponse.context: {json.dumps(chat_response.context, indent=2, default=str)}")
+        print(f"[DEBUG] ChatResponse.visualizations: {json.dumps(chat_response.visualizations, indent=2, default=str)}")
+        
+        return chat_response
 
     def _extract_analysis_type_with_deepseek(self, message: str) -> str:
         """

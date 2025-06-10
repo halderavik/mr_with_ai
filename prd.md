@@ -9,11 +9,12 @@ Market Pro empowers analysts to upload survey data (SPSS, CSV, Excel), run advan
    - Full SPSS metadata JSON export (variable labels, value labels, missing codes, measurement levels).  
    - Tabular preview with filter/search before analysis.  
 2. **Intelligent Chat Interface**  
-   - Natural language requests (e.g., “run Van Westendrop on the pricing variables”).  
+   - Natural language requests (e.g., "run Van Westendrop on the pricing variables").  
    - Deepseek Chat Model for context-aware follow-ups.  
 3. **Modular Analysis (MCP Architecture)**  
    - Standardized API endpoints (`/api/analysis/run`) for each MCP.  
    - First MCP: Van Westendrop Price Sensitivity; extendable to Driver Analysis, Segmentation, CBC, etc.  
+   - **Conversational variable mapping confirmation:** The system always proposes a variable mapping for required analysis variables. The user must confirm or edit the mapping via chat before analysis runs. Users can confirm with 'yes'/'confirm' or provide a new mapping in natural language. The AgentController and MCPs robustly enforce this conversational flow.
 4. **Visualization & Export**  
    - Interactive charts (Recharts) and tables.  
    - PNG & PPTX downloads directly from UI.  
