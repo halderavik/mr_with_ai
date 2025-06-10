@@ -8,7 +8,6 @@ class ChatRequest(BaseModel):
     message: str
     filter_column: Optional[str] = None
     filter_value: Optional[Any] = None
-    metadata: Optional[Dict[str, Any]] = None
 
 
 class ChatResponse(BaseModel):

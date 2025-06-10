@@ -14,6 +14,7 @@ import traceback
 import json
 import math
 import numpy as np
+import os
 
 from .config import UPLOAD_DIR, ALLOWED_ORIGINS, MAX_FILE_SIZE
 from .models.file_schemas import UploadResponse, PreviewRequest, PreviewResponse
@@ -165,6 +166,7 @@ async def upload_data(
 ):
     """
     Upload a data file (SPSS, CSV, Excel) and return preview + metadata.
+    Also saves SPSS metadata as a JSON file for later use by MCP servers.
     """
     try:
         logger.info(f"Received file upload request: {file.filename}")
@@ -210,10 +212,13 @@ async def upload_data(
                 _, meta = pyreadstat.read_sav(str(result["filepath"]))
                 metadata_json = extract_spss_metadata(meta)
                 logger.info("SPSS metadata extracted successfully")
+                # Save metadata as JSON for later use
+                meta_path = os.path.join(UPLOAD_DIR, current_user, f"{dataset_id}_meta.json")
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump(metadata_json, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 logger.error(f"Error reading SPSS metadata: {str(e)}")
                 logger.error(traceback.format_exc())
-                # Don't raise an exception, just log the error and continue
                 metadata_json = {"error": str(e)}
         
         # Return via JSONResponse to bypass Pydantic model serialization
@@ -312,6 +317,18 @@ async def analyze_endpoint(
         insights=result.get("insights", ""),
         message="Analysis completed."
     )
+
+@app.get("/api/deepseek_test")
+async def deepseek_test():
+    """
+    Test endpoint to verify DeepSeek API connection.
+    """
+    try:
+        prompt = "Say hello from DeepSeek API."
+        reply = agent_controller.chat_model.generate_reply(prompt)
+        return {"success": True, "reply": reply}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
