@@ -13,19 +13,23 @@ def save_uploaded_file(user_id: str, file: UploadFile) -> dict:
     """
     Save an uploaded file under UPLOAD_DIR/<user_id>/
     Return a dict with dataset_id and filepath.
+    Dataset IDs are only created during file upload and must be unique.
     """
     try:
         suffix = Path(file.filename).suffix.lower()
         if suffix not in ALLOWED_EXTENSIONS:
             raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}")
 
-        # Generate a unique dataset_id (UUID4):
+        # Generate a unique dataset_id (UUID4) only during file upload:
         dataset_id = str(uuid.uuid4())
         user_folder = UPLOAD_DIR / user_id
         user_folder.mkdir(parents=True, exist_ok=True)
 
-        # Destination path:
+        # Check if dataset_id already exists (should never happen with UUID4, but just in case)
         dest_path = user_folder / f"{dataset_id}{suffix}"
+        if dest_path.exists():
+            raise HTTPException(status_code=500, detail="Dataset ID collision detected. Please try uploading again.")
+
         logger.info(f"Saving file to: {dest_path}")
 
         # Read & write to disk:
@@ -48,6 +52,7 @@ def save_uploaded_file(user_id: str, file: UploadFile) -> dict:
 def get_file_path(user_id: str, dataset_id: str) -> Path:
     """
     Find the file on disk by scanning user folder for dataset_id.*
+    This function only retrieves existing files and does not create new dataset IDs.
     """
     try:
         user_folder = UPLOAD_DIR / user_id

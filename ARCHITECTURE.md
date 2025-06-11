@@ -44,12 +44,19 @@ graph TD
     - Push visualizations to frontend
     - Currently implemented:
         - VanWestendorpMCP: Price sensitivity analysis
-            - Calculates PMC, PME, and OPP
-            - Generates price sensitivity curves using matplotlib
-            - Converts plots to base64-encoded PNG
-            - Provides detailed insights
-            - Handles data validation and filtering
-            - Supports interactive visualization
+            - Calculates key price points:
+                - PMC: Intersection of Too Cheap and Getting Expensive curves
+                - PME: Intersection of Bargain and Too Expensive curves
+                - OPP: Intersection of Too Cheap and Too Expensive curves
+            - Generates accurate price sensitivity curves using proper cumulative distributions
+            - Converts plots to base64-encoded PNG with precise price point markers
+            - Provides detailed insights and recommendations
+            - Handles data validation and preprocessing:
+                - Sorts price arrays for proper cumulative calculation
+                - Validates respondent data completeness
+                - Ensures correct curve orientations
+            - Calculates price sensitivity: (PME - PMC) / PMC * 100
+            - Supports interactive visualization with accurate price point markers
 
 ### 3. Data Flow
 1. **Upload:** User uploads data file → Backend extracts data + metadata

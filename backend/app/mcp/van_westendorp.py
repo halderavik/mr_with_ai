@@ -295,6 +295,7 @@ class VanWestendorpMCP(MCPBase):
                 - chat_model: LLM model for column mapping
                 - question: Optional follow-up question about the analysis
                 - conversation_context: Optional previous conversation context
+                - auto_map: Boolean indicating whether to handle mapping automatically
                 
         Returns:
             Dict[str, Any]: Analysis results
@@ -354,10 +355,6 @@ class VanWestendorpMCP(MCPBase):
         if params.get("column_map"):
             print("[DEBUG] Using provided column mapping:", params["column_map"])
             col_map = params["column_map"]
-            # If a mapping is provided, treat as confirmed
-            column_map_confirmed = params.get("column_map_confirmed", False)
-            if not column_map_confirmed:
-                column_map_confirmed = True
         else:
             # 3. Use LLM to propose mapping
             prompt = (
@@ -399,28 +396,6 @@ class VanWestendorpMCP(MCPBase):
                         print(f"[DEBUG] Found match for {key}: {value}")
             print("[DEBUG] Parsed column mapping:", col_map)
             print("[DEBUG] Available DataFrame columns:", list(data.columns))
-            column_map_confirmed = False
-
-        # Require user confirmation of mapping before running analysis
-        if not column_map_confirmed:
-            # Compose a chat message for the user to confirm or edit the mapping
-            mapping_str = '\n'.join([f"{k}: {v}" for k, v in col_map.items()])
-            reply = (
-                "Before running the Van Westendorp analysis, please confirm the variable mapping for your data columns. "
-                "Here is the proposed mapping:\n\n"
-                f"{mapping_str}\n\n"
-                "If this mapping is correct, reply with 'yes' or 'confirm'. "
-                "If you want to edit, reply with the correct mapping in the same format."
-            )
-            return {
-                "reply": reply,
-                "context": {
-                    "analysis_type": self.name,
-                    "proposed_column_map": col_map,
-                    "variables_used": self.required_columns,
-                    "column_map_confirmed": False
-                }
-            }
 
         # 4. Fallback to params or default mapping if LLM mapping is incomplete
         if params.get("column_map"):
@@ -501,14 +476,24 @@ class VanWestendorpMCP(MCPBase):
         n = len(p_tc)  # Number of respondents
         print(f"[DEBUG] Number of respondents: {n}")
         
-        # Too Cheap curve (increasing)
-        tc_cum = np.array([np.sum(p_tc <= p) for p in price_grid]) / n * 100
-        # Too Expensive curve (decreasing)
-        te_cum = np.array([np.sum(p_te <= p) for p in price_grid]) / n * 100
-        # Bargain curve (increasing)
-        ba_cum = np.array([np.sum(p_ba <= p) for p in price_grid]) / n * 100
-        # Getting Expensive curve (decreasing)
-        ge_cum = np.array([np.sum(p_ge <= p) for p in price_grid]) / n * 100
+        # Sort all price arrays for proper cumulative calculation
+        p_tc_sorted = np.sort(p_tc)
+        p_ba_sorted = np.sort(p_ba)
+        p_ge_sorted = np.sort(p_ge)
+        p_te_sorted = np.sort(p_te)
+        
+        # Calculate cumulative percentages for each price point
+        # Too Cheap curve (increasing): % who say price is too cheap
+        tc_cum = np.array([np.sum(p_tc_sorted <= p) for p in price_grid]) / n * 100
+        
+        # Too Expensive curve (decreasing): % who say price is too expensive
+        te_cum = np.array([np.sum(p_te_sorted >= p) for p in price_grid]) / n * 100
+        
+        # Bargain curve (increasing): % who say price is a bargain
+        ba_cum = np.array([np.sum(p_ba_sorted <= p) for p in price_grid]) / n * 100
+        
+        # Getting Expensive curve (decreasing): % who say price is getting expensive
+        ge_cum = np.array([np.sum(p_ge_sorted >= p) for p in price_grid]) / n * 100
         
         print("[DEBUG] Cumulative distribution ranges:")
         print(f"Too Cheap: {min(tc_cum):.1f}% to {max(tc_cum):.1f}%")
@@ -518,23 +503,21 @@ class VanWestendorpMCP(MCPBase):
         
         # 9. Find key price points
         print("\n[DEBUG] Finding key price points...")
-        # Point of Marginal Cheapness (PMC): where too cheap = bargain
-        pmc_idx = np.argmin(np.abs(tc_cum - ba_cum))
+        
+        # Point of Marginal Cheapness (PMC): where too cheap = getting expensive
+        # This is the lowest price where the product is not considered too cheap
+        pmc_idx = np.argmin(np.abs(tc_cum - ge_cum))
         pmc = price_grid[pmc_idx]
         
-        # Point of Marginal Expensiveness (PME): where too expensive = getting expensive
-        pme_idx = np.argmin(np.abs(te_cum - ge_cum))
+        # Point of Marginal Expensiveness (PME): where bargain = too expensive
+        # This is the highest price where the product is not considered too expensive
+        pme_idx = np.argmin(np.abs(ba_cum - te_cum))
         pme = price_grid[pme_idx]
         
-        # Optimal Price Point (OPP): where acceptable = expensive
-        # Calculate acceptable range (between PMC and PME)
-        acceptable_range = (price_grid >= pmc) & (price_grid <= pme)
-        if np.any(acceptable_range):
-            opp_idx = np.argmin(np.abs(ba_cum[acceptable_range] - ge_cum[acceptable_range]))
-            opp = price_grid[acceptable_range][opp_idx]
-        else:
-            opp = (pmc + pme) / 2
-            print("[WARNING] No acceptable price range found, using midpoint")
+        # Optimal Price Point (OPP): where too cheap = too expensive
+        # This is the price where the product is neither too cheap nor too expensive
+        opp_idx = np.argmin(np.abs(tc_cum - te_cum))
+        opp = price_grid[opp_idx]
         
         print("[DEBUG] Key price points:")
         print(f"PMC: ${pmc:.2f}")
@@ -542,6 +525,7 @@ class VanWestendorpMCP(MCPBase):
         print(f"OPP: ${opp:.2f}")
         
         # 10. Calculate price sensitivity
+        # Price sensitivity is the percentage difference between PME and PMC
         price_sensitivity = (pme - pmc) / pmc * 100
         
         # After calculating all the metrics, generate visualizations

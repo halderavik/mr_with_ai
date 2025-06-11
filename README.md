@@ -29,25 +29,15 @@ A modern web application for analyzing market research data, with a focus on SPS
 
 - **Advanced Analysis**
   - Van Westendorp Price Sensitivity Analysis
-    - Point of Marginal Cheapness (PMC)
-    - Point of Marginal Expensiveness (PME)
-    - Optimal Price Point (OPP)
-    - Price sensitivity curves
-    - Interactive visualizations
+    - Point of Marginal Cheapness (PMC): Intersection of Too Cheap and Getting Expensive curves
+    - Point of Marginal Expensiveness (PME): Intersection of Bargain and Too Expensive curves
+    - Optimal Price Point (OPP): Intersection of Too Cheap and Too Expensive curves
+    - Price sensitivity curves with proper cumulative distributions
+    - Interactive visualizations with accurate price point markers
     - Detailed insights and recommendations
-  - More analyses coming soon...
-  - Van Westendorp Price Sensitivity Analysis
-    - Point of Marginal Cheapness (PMC)
-    - Point of Marginal Expensiveness (PME)
-    - Optimal Price Point (OPP)
-    - Price sensitivity curves
-    - Interactive visualizations
-    - Detailed insights and recommendations
-    - **Conversational variable mapping confirmation:**
-      - The backend proposes a variable mapping for required analysis variables (e.g., too_cheap, bargain, getting_expensive, too_expensive).
-      - The user must confirm or edit the mapping via chat before analysis runs.
-      - The AgentController and MCPs robustly handle this flow, ensuring the analysis only runs after confirmation.
-      - Users can confirm with 'yes'/'confirm' or provide a new mapping in natural language.
+    - Automatic variable mapping with LLM assistance
+    - Robust data validation and preprocessing
+    - Price sensitivity calculation: (PME - PMC) / PMC * 100
   - More analyses coming soon...
 
 - **Modern UI**

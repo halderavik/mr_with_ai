@@ -166,6 +166,7 @@ async def upload_data(
 ):
     """
     Upload a data file (SPSS, CSV, Excel) and return preview + metadata.
+    Creates a unique dataset_id only during file upload.
     Also saves SPSS metadata as a JSON file for later use by MCP servers.
     """
     try:
@@ -191,10 +192,17 @@ async def upload_data(
                 detail=f"Invalid file type. Allowed types: .sav, .csv, .xlsx, .xls"
             )
 
-        # Save the file and get dataset_id
+        # Save the file and get dataset_id - this is the only place where dataset_id is created
         logger.info("Saving uploaded file...")
         result = save_uploaded_file(current_user, file)
         dataset_id = result["dataset_id"]
+        
+        # Verify the dataset was saved correctly
+        if not get_file_path(current_user, dataset_id).exists():
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to save dataset properly. Please try uploading again."
+            )
         
         # Load the data for preview
         logger.info("Loading dataset for preview...")
