@@ -34,7 +34,7 @@ graph TD
 
 ### 2. Backend (FastAPI)
 - **API Layer:** Handles file upload, analysis requests, and chat.
-- **Data Loader:** Loads data and extracts metadata (esp. for SPSS).
+- **Data Loader:** Loads data and extracts comprehensive metadata (esp. for SPSS using pyreadstat).
 - **Agent Controller:** Orchestrates analysis requests, LLM prompts, and MCP server calls.
 - **LLM Integration:** Uses Deepseek (or other LLM) to interpret variable descriptions and propose mappings.
 - **MCP Servers:** Modular analysis engines that:
@@ -57,6 +57,11 @@ graph TD
                 - Ensures correct curve orientations
             - Calculates price sensitivity: (PME - PMC) / PMC * 100
             - Supports interactive visualization with accurate price point markers
+            - Enhanced segmentation support:
+                - Automatically identifies segmentation variables from metadata
+                - Uses LLM to match variable names with questions
+                - Runs analysis separately for each segment
+                - Provides segment-specific insights and visualizations
 
 ### 3. Data Flow
 1. **Upload:** User uploads data file → Backend extracts data + metadata
@@ -68,6 +73,32 @@ graph TD
 7. **Visualization Generation:** MCP generates plots using matplotlib
 8. **Results Push:** MCP sends visualizations and results to frontend
 9. **Display:** Frontend updates UI with new visualizations
+
+---
+
+## Metadata Handling
+
+### SPSS Metadata Extraction
+The system uses `pyreadstat` to extract comprehensive metadata from SPSS files:
+
+- **Column Names:** Variable names from the dataset
+- **Column Labels:** Full question text for each variable
+- **Value Labels:** Response options and their corresponding values
+- **Variable Labels:** Additional variable descriptions
+- **Variable Formats:** Data format information
+- **Variable Measures:** Measurement levels (nominal, ordinal, scale)
+- **Variable Roles:** SPSS variable roles
+- **Variable Values:** Additional value information
+
+### Metadata Caching
+- **5-minute cache:** Reduces redundant parsing of large SPSS files
+- **Automatic regeneration:** Detects corrupted or empty metadata and regenerates
+- **Error recovery:** Graceful handling of file access issues
+
+### Variable Mapping
+- **LLM-powered matching:** Uses Deepseek to match user requests with available variables
+- **Semantic matching:** Considers question text, variable labels, and value labels
+- **Segmentation support:** Automatically identifies age, gender, income, and other segmentation variables
 
 ---
 
@@ -99,27 +130,31 @@ sequenceDiagram
 - **Interactivity:** User confirms or edits variable mapping in chat before analysis runs. The backend never leaves the MCP context until mapping is confirmed. Users can confirm with 'yes'/'confirm' or provide a new mapping in natural language.
 - **Extensibility:** Supports new file types, LLMs, and analysis modules.
 - **Data Quality:** Robust validation and filtering of input data.
-- **Performance:** Efficient processing of large datasets.
+- **Performance:** Efficient processing of large datasets with metadata caching.
 - **Visualization:** Real-time updates and interactive features.
+- **Segmentation:** Automatic identification and handling of segmentation variables.
 
 ---
 
 ## Example Sequence
-1. **User uploads SPSS file** → Backend extracts data and metadata
-2. **User requests "Van Westendorp analysis"**
+1. **User uploads SPSS file** → Backend extracts data and comprehensive metadata
+2. **User requests "Van Westendorp analysis by age"**
 3. **Agent Controller**:
-    - Uses LLM to map variables from metadata
+    - Uses LLM to identify age variable from metadata
+    - Maps Van Westendorp variables using LLM
     - Proposes mapping to user via chat
     - Waits for user confirmation
 4. **User confirms mapping**
 5. **VanWestendorpMCP**:
-    - Validates input data
+    - Identifies age groups from value labels
+    - Runs analysis separately for each age group
+    - Validates input data for each segment
     - Filters for complete responses
-    - Calculates price points (PMC, PME, OPP)
+    - Calculates price points (PMC, PME, OPP) for each segment
     - Generates sensitivity curves using matplotlib
     - Converts plots to base64 PNG
-    - Returns results with visualizations
-6. **Frontend displays results** (charts, tables, insights)
+    - Returns results with segment-specific visualizations
+6. **Frontend displays results** (charts, tables, insights) for each age group
 
 ---
 
@@ -130,6 +165,7 @@ sequenceDiagram
 - **Data Analysis:** Pandas, Numpy
 - **Visualization:** Matplotlib
 - **File Support:** SPSS (pyreadstat), CSV, Excel
+- **Metadata:** Comprehensive SPSS metadata extraction and caching
 
 ---
 
@@ -138,6 +174,7 @@ sequenceDiagram
 - **Add new analysis type:** Update LLM prompt and frontend options.
 - **Swap LLM:** Replace Deepseek integration in Agent Controller.
 - **Add visualization:** Implement matplotlib plotting in MCP.
+- **Add segmentation:** Implement automatic variable identification and segment-specific analysis.
 
 ---
 
@@ -152,6 +189,7 @@ sequenceDiagram
     participant M as MCP
     U->>F: Upload data file
     F->>B: POST /api/upload
+    B->>B: Extract metadata (pyreadstat)
     B->>F: Data preview + metadata
     U->>F: Request analysis via chat
     F->>B: POST /api/chat (with metadata)

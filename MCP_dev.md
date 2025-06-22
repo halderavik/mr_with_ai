@@ -16,6 +16,46 @@ An MCP (Market Research Control Protocol) is a Python class that implements a sp
 
 ---
 
+## Enhanced Metadata Support
+
+### Available Metadata
+Your MCP will receive comprehensive metadata in the `params` dictionary:
+
+```python
+metadata = params.get("metadata", {})
+# Available fields:
+# - columns: List of column names
+# - column_labels: Dict mapping column names to question text
+# - value_labels: Dict mapping column names to value labels
+# - variable_labels: Dict mapping column names to variable descriptions
+# - variable_measure: Dict mapping column names to measurement levels
+# - variable_formats: Dict mapping column names to format information
+```
+
+### LLM-Powered Variable Matching
+Use the provided `chat_model` to match user requests with available variables:
+
+```python
+def find_segmentation_variable(self, metadata, chat_model, request):
+    """Find segmentation variable using LLM."""
+    column_labels = metadata.get('column_labels', {})
+    
+    prompt = f"""
+    Given these questions from the survey, find the one that best matches the segmentation request.
+    Segmentation requested: {request}
+    
+    Available questions:
+    {json.dumps(column_labels, indent=2)}
+    
+    Reply with the EXACT column name that best matches.
+    """
+    
+    response = chat_model.generate_reply(prompt)
+    return response.strip()
+```
+
+---
+
 ## What You Need to Do
 
 ### 1. MCP Class Requirements
@@ -31,7 +71,7 @@ This is the only method you must implement. It will be called like:
 result = MyMCP().run(data, params)
 ```
 - `data`: a pandas DataFrame with the uploaded data.
-- `params`: a dict with keys like `column_map`, `column_map_confirmed`, and `chat_model` (for LLM use).
+- `params`: a dict with keys like `column_map`, `column_map_confirmed`, `chat_model`, and `metadata`.
 
 #### Your `run()` method must:
 1. **Propose a variable mapping** if none is confirmed:
@@ -46,27 +86,72 @@ result = MyMCP().run(data, params)
 5. **Format and return results:**
     - Return a dictionary with keys: `visualizations`, `insights`, `reply`, and `context` (see below).
 
+### 3. Optional: Segmentation Support
+If your analysis supports segmentation, implement automatic variable identification:
+
+```python
+def handle_segmentation(self, params, metadata):
+    """Handle segmentation requests automatically."""
+    if "by" in params.get("question", "").lower():
+        # Extract segmentation variable from question
+        segmentation_var = self.find_segmentation_variable(metadata, params['chat_model'], "age")
+        
+        # Get value labels for segmentation groups
+        value_labels = metadata.get('value_labels', {}).get(segmentation_var, {})
+        
+        # Create segments
+        segments = {}
+        for value, label in value_labels.items():
+            segment_data = data[data[segmentation_var] == value]
+            if len(segment_data) > 0:
+                segments[label] = segment_data
+        
+        return segments
+    return {"Overall": data}
+```
+
 ---
 
-## Example: Minimal MCP
+## Example: Enhanced MCP with Segmentation
 ```python
 from app.services.mcp_base import MCPBase
 import pandas as pd
+import json
 
 class ExampleMCP(MCPBase):
     def __init__(self):
         super().__init__()
         self.name = "example"
         self.required_columns = ["x", "y"]
-        self.description = "Example analysis."
+        self.description = "Example analysis with segmentation support."
+
+    def find_variable_mapping(self, metadata, chat_model):
+        """Use LLM to find variable mapping."""
+        column_labels = metadata.get('column_labels', {})
+        
+        prompt = f"""
+        Given these questions, which columns should be used for the analysis?
+        We need: x, y
+        
+        Available questions:
+        {json.dumps(column_labels, indent=2)}
+        
+        Reply with JSON: {{"x": "column_name", "y": "column_name"}}
+        """
+        
+        response = chat_model.generate_reply(prompt)
+        return json.loads(response)
 
     def run(self, data, params=None):
+        metadata = params.get("metadata", {})
+        
         # 1. Propose mapping if not confirmed
         if not params.get("column_map") or not params.get("column_map_confirmed", False):
-            proposed_map = {"x": "Q1", "y": "Q2"}
+            proposed_map = self.find_variable_mapping(metadata, params['chat_model'])
             return {
-                "reply": "Before running the analysis, please confirm the variable mapping:\n"
-                         "x: Q1\ny: Q2\nReply 'yes' to confirm or provide a new mapping.",
+                "reply": f"Before running the analysis, please confirm the variable mapping:\n"
+                         f"x: {proposed_map['x']}\ny: {proposed_map['y']}\n"
+                         f"Reply 'yes' to confirm or provide a new mapping.",
                 "context": {
                     "analysis_type": self.name,
                     "proposed_column_map": proposed_map,
@@ -74,14 +159,26 @@ class ExampleMCP(MCPBase):
                     "column_map_confirmed": False
                 }
             }
-        # 2. Run analysis
-        col_map = params["column_map"]
-        # ... your analysis logic here ...
+        
+        # 2. Handle segmentation
+        segments = self.handle_segmentation(params, metadata)
+        
+        # 3. Run analysis for each segment
+        results = {}
+        for segment_name, segment_data in segments.items():
+            col_map = params["column_map"]
+            # ... your analysis logic here ...
+            results[segment_name] = analysis_result
+        
         return {
             "visualizations": {"charts": [], "tables": []},
             "insights": "Key findings and recommendations...",
             "reply": "Business-focused summary for the user...",
-            "context": {"analysis_type": self.name, "variables_used": self.required_columns}
+            "context": {
+                "analysis_type": self.name, 
+                "variables_used": self.required_columns,
+                "segments": list(segments.keys())
+            }
         }
 ```
 
@@ -110,7 +207,8 @@ Your `run()` method must always return a dictionary with these keys:
     "context": {
         "analysis_type": "example",
         "variables_used": ["x", "y"],
-        "column_map_confirmed": True
+        "column_map_confirmed": True,
+        "segments": ["18-24", "25-34", "35+"]
     }
 }
 ```
@@ -122,6 +220,8 @@ Your `run()` method must always return a dictionary with these keys:
 - [ ] Set `self.name`, `self.required_columns`, and `self.description`.
 - [ ] Implement `run()` as described above.
 - [ ] Always propose and confirm variable mapping before running analysis.
+- [ ] Use LLM to match variables with available metadata.
+- [ ] Implement segmentation support if applicable.
 - [ ] Return results in the required format.
 - [ ] Test your MCP by simulating the chat flow (propose mapping, confirm, run analysis).
 
@@ -130,8 +230,11 @@ Your `run()` method must always return a dictionary with these keys:
 ## Best Practices
 - **Be explicit about required variables** and check for their presence in the mapping and data.
 - **Never run analysis without user confirmation** of the mapping.
+- **Use LLM for variable matching** to handle different question formats and naming conventions.
+- **Support segmentation** when it makes sense for your analysis.
 - **Return clear, actionable replies** for the chat agent (use LLM to polish if needed).
 - **Log debug info** for easier troubleshooting.
+- **Handle metadata gracefully** - check if fields exist before using them.
 
 ---
 
@@ -145,9 +248,15 @@ A: You will receive a `chat_model` in `params`—call `chat_model.generate_reply
 **Q: How do I generate a chart?**
 A: Use matplotlib or your preferred library, save to a PNG in memory, and base64-encode it for the `plot_data` field.
 
+**Q: How do I handle segmentation?**
+A: Use the metadata to identify segmentation variables and run your analysis separately for each segment.
+
+**Q: What metadata is available?**
+A: Column names, column labels (questions), value labels, variable labels, measurement levels, and more.
+
 ---
 
 ## See Also
-- Example: `van_westendorp.py` for a full-featured MCP
+- Example: `van_westendorp.py` for a full-featured MCP with segmentation
 - Main architecture: `ARCHITECTURE.md`
 - API/Chat flow: `README.md` 

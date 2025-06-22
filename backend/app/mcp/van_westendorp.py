@@ -284,9 +284,452 @@ class VanWestendorpMCP(MCPBase):
         print("[DEBUG] Final visualization result:", json.dumps(result, indent=2))
         return result
 
+    def _process_user_request(self, question: str, metadata: Dict[str, Any], context: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Process user request to extract analysis parameters and generate follow-up questions.
+        
+        Args:
+            question (str): User's question
+            metadata (Dict[str, Any]): Dataset metadata
+            context (Optional[Dict[str, Any]]): Previous conversation context
+            params (Optional[Dict[str, Any]]): Additional parameters including chat_model
+            
+        Returns:
+            Dict containing:
+            - analysis_plan: Dict with analysis parameters
+            - followup_questions: List of questions to ask user
+            - segmentation_groups: Dict mapping segment names to their values
+        """
+        try:
+            print(f"[DEBUG] Processing question: {question}")
+            
+            # Get all available questions and their details
+            questions_info = []
+            column_labels = metadata.get('column_labels', {})
+            
+            for var, question_text in column_labels.items():
+                if question_text:  # Only include non-empty questions
+                    question_info = {
+                        'variable': var,
+                        'question': question_text,
+                        'variable_label': metadata.get('variable_labels', {}).get(var, ''),
+                        'value_labels': metadata.get('value_labels', {}).get(var, {}),
+                        'measure': metadata.get('variable_measure', {}).get(var, ''),
+                        'format': metadata.get('variable_formats', {}).get(var, '')
+                    }
+                    questions_info.append(question_info)
+            
+            print(f"[DEBUG] Available questions:")
+            for info in questions_info:
+                print(f"- {info['variable']}: {info['question']}")
+            
+            # Get segmentation from context or params
+            segmentation = context.get('segmentation') if context else params.get('segmentation')
+            
+            # Step 1: Find matching variable by checking all available metadata
+            if segmentation and segmentation not in metadata.get('columns', []):
+                if not params or 'chat_model' not in params:
+                    raise ValueError("chat_model not provided in params")
+                
+                # Create a focused prompt to find matching question using all available metadata
+                prompt = (
+                    "Given the following questions and their metadata from the survey, find the one that best matches the segmentation request.\n"
+                    f"Segmentation requested: {segmentation}\n\n"
+                    "Available questions with their metadata:\n" +
+                    "\n".join(
+                        f"- Variable: {info['variable']}\n"
+                        f"  Question: {info['question']}\n"
+                        f"  Variable Label: {info['variable_label']}\n"
+                        f"  Value Labels: {info['value_labels']}\n"
+                        f"  Measure: {info['measure']}\n"
+                        f"  Format: {info['format']}"
+                        for info in questions_info
+                    ) +
+                    "\n\nInstructions:\n"
+                    "1. Look for questions that match the segmentation request semantically\n"
+                    "2. Consider both the question text and variable labels\n"
+                    "3. For age, look for questions asking about age or containing age-related terms\n"
+                    "4. Also check the value labels for age ranges or age-related values\n"
+                    "5. Reply with the EXACT variable name that best matches\n"
+                    "6. If no match is found, reply with 'NO_MATCH'"
+                )
+                
+                print(f"[DEBUG] Sending prompt to LLM for variable matching:\n{prompt}")
+                
+                # Get LLM's response
+                response = params['chat_model'].generate_reply(prompt)
+                matched_var = response.strip()
+                
+                print(f"[DEBUG] LLM matched variable: {matched_var}")
+                
+                if matched_var == 'NO_MATCH':
+                    raise ValueError(f"Could not find matching variable for segmentation '{segmentation}'")
+                
+                if matched_var not in metadata.get('columns', []):
+                    raise ValueError(f"LLM returned invalid variable name: {matched_var}")
+                
+                # Get the complete metadata for the matched variable
+                matched_info = next((info for info in questions_info if info['variable'] == matched_var), None)
+                if not matched_info:
+                    raise ValueError(f"Could not find metadata for matched variable: {matched_var}")
+                
+                print(f"[DEBUG] Matched variable: {matched_info['variable']}")
+                print(f"[DEBUG] Matched question: {matched_info['question']}")
+                
+                # Create segmentation groups based on value labels
+                segmentation_groups = {}
+                for value, label in matched_info['value_labels'].items():
+                    segmentation_groups[label] = value
+                
+                print(f"[DEBUG] Created segmentation groups: {segmentation_groups}")
+                
+                return {
+                    'filters': {},
+                    'segmentation': matched_var,
+                    'explanation': f"Running Van Westendorp analysis segmented by {matched_info['question']}",
+                    'followup_questions': [],
+                    'segmentation_groups': segmentation_groups
+                }
+            
+            # If no segmentation specified, check if we need to ask for it
+            if "by" in question.lower():
+                # Extract potential segmentation variable from question
+                parts = question.lower().split("by")
+                if len(parts) > 1:
+                    potential_seg = parts[1].strip()
+                    
+                    # Use LLM to find matching variable
+                    if params and 'chat_model' in params:
+                        prompt = (
+                            "Given the following questions and their metadata from the survey, find the one that best matches the segmentation request.\n"
+                            f"Segmentation requested: {potential_seg}\n\n"
+                            "Available questions with their metadata:\n" +
+                            "\n".join(
+                                f"- Variable: {info['variable']}\n"
+                                f"  Question: {info['question']}\n"
+                                f"  Variable Label: {info['variable_label']}\n"
+                                f"  Value Labels: {info['value_labels']}\n"
+                                f"  Measure: {info['measure']}\n"
+                                f"  Format: {info['format']}"
+                                for info in questions_info
+                            ) +
+                            "\n\nInstructions:\n"
+                            "1. Look for questions that match the segmentation request semantically\n"
+                            "2. Consider both the question text and variable labels\n"
+                            "3. For age, look for questions asking about age or containing age-related terms\n"
+                            "4. Also check the value labels for age ranges or age-related values\n"
+                            "5. Reply with the EXACT variable name that best matches\n"
+                            "6. If no match is found, reply with 'NO_MATCH'"
+                        )
+                        
+                        print(f"[DEBUG] Sending prompt to LLM for variable matching:\n{prompt}")
+                        
+                        response = params['chat_model'].generate_reply(prompt)
+                        matched_var = response.strip()
+                        
+                        print(f"[DEBUG] LLM matched variable: {matched_var}")
+                        
+                        if matched_var != 'NO_MATCH' and matched_var in metadata.get('columns', []):
+                            # Get the complete metadata for the matched variable
+                            matched_info = next((info for info in questions_info if info['variable'] == matched_var), None)
+                            if matched_info:
+                                # Create segmentation groups based on value labels
+                                segmentation_groups = {}
+                                for value, label in matched_info['value_labels'].items():
+                                    segmentation_groups[label] = value
+                                
+                                return {
+                                    'filters': {},
+                                    'segmentation': matched_var,
+                                    'explanation': f"Running Van Westendorp analysis segmented by {matched_info['question']}",
+                                    'followup_questions': [],
+                                    'segmentation_groups': segmentation_groups
+                                }
+            
+            # Default case: no segmentation
+            return {
+                'filters': {},
+                'segmentation': None,
+                'explanation': "Running standard Van Westendorp analysis",
+                'followup_questions': [],
+                'segmentation_groups': {}
+            }
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to process user request: {str(e)}")
+            # Return a safe default analysis plan
+            return {
+                'filters': {},
+                'segmentation': None,
+                'explanation': "Error processing request. Please try again.",
+                'followup_questions': ["Could you please rephrase your request?"],
+                'segmentation_groups': {}
+            }
+
+    def _validate_data(self, data: pd.DataFrame, column_map: Dict[str, str]) -> None:
+        """
+        Validate that the data in the mapped columns is valid for analysis.
+        
+        Args:
+            data (pd.DataFrame): Input data
+            column_map (Dict[str, str]): Mapping of required columns to actual column names
+            
+        Raises:
+            ValueError: If data validation fails
+        """
+        for field, column in column_map.items():
+            # Check if column exists
+            if column not in data.columns:
+                raise ValueError(f"Column '{column}' (mapped to {field}) not found in dataset")
+            
+            # Check for non-numeric values
+            if not pd.to_numeric(data[column], errors='coerce').notna().all():
+                raise ValueError(f"Column '{column}' contains non-numeric values")
+            
+            # Check for negative values
+            if (data[column] < 0).any():
+                raise ValueError(f"Column '{column}' contains negative values")
+            
+            # Check for empty/null values
+            if data[column].isna().any():
+                raise ValueError(f"Column '{column}' contains null values")
+
+    def _calculate_curves(self, too_cheap: pd.Series, too_expensive: pd.Series, 
+                         bargain: pd.Series, getting_expensive: pd.Series) -> tuple:
+        """
+        Calculate the cumulative distribution curves for Van Westendorp analysis.
+        Following the complete formula set from documentation.
+        
+        Args:
+            too_cheap: Series of "too cheap" price points
+            too_expensive: Series of "too expensive" price points
+            bargain: Series of "bargain" price points
+            getting_expensive: Series of "getting expensive" price points
+            
+        Returns:
+            tuple: (price_grid, tc_cum, te_cum, ba_cum, ge_cum)
+        """
+        try:
+            # Convert to numeric, coercing errors to NaN
+            too_cheap = pd.to_numeric(too_cheap, errors='coerce')
+            too_expensive = pd.to_numeric(too_expensive, errors='coerce')
+            bargain = pd.to_numeric(bargain, errors='coerce')
+            getting_expensive = pd.to_numeric(getting_expensive, errors='coerce')
+            
+            # Remove any NaN values
+            too_cheap = too_cheap.dropna()
+            too_expensive = too_expensive.dropna()
+            bargain = bargain.dropna()
+            getting_expensive = getting_expensive.dropna()
+            
+            if len(too_cheap) == 0 or len(too_expensive) == 0 or len(bargain) == 0 or len(getting_expensive) == 0:
+                raise ValueError("One or more price columns contain no valid numeric data")
+            
+            # Calculate price range with 10% buffer
+            min_price = min(
+                too_cheap.min(),
+                too_expensive.min(),
+                bargain.min(),
+                getting_expensive.min()
+            )
+            max_price = max(
+                too_cheap.max(),
+                too_expensive.max(),
+                bargain.max(),
+                getting_expensive.max()
+            )
+            
+            if min_price >= max_price:
+                raise ValueError("Invalid price range: min_price >= max_price")
+            
+            # Apply 10% buffer to range
+            price_range_min = min_price * 0.9
+            price_range_max = max_price * 1.1
+            
+            # Create price grid with 200 points for smooth curves
+            price_grid = np.linspace(price_range_min, price_range_max, 200)
+            
+            # Calculate cumulative distributions following the formula
+            # TC(P) = (Number of respondents where too_cheap ≤ P) / N × 100
+            tc_cum = np.array([(too_cheap <= p).mean() * 100 for p in price_grid])
+            
+            # B(P) = (Number of respondents where bargain ≤ P) / N × 100
+            ba_cum = np.array([(bargain <= p).mean() * 100 for p in price_grid])
+            
+            # GE(P) = (Number of respondents where getting_expensive ≥ P) / N × 100
+            ge_cum = np.array([(getting_expensive >= p).mean() * 100 for p in price_grid])
+            
+            # TE(P) = (Number of respondents where too_expensive ≥ P) / N × 100
+            te_cum = np.array([(too_expensive >= p).mean() * 100 for p in price_grid])
+            
+            return price_grid, tc_cum, te_cum, ba_cum, ge_cum
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to calculate curves: {str(e)}")
+            raise ValueError(f"Failed to calculate price curves: {str(e)}")
+
+    def _find_intersection(self, x: np.ndarray, y1: np.ndarray, y2: np.ndarray) -> float:
+        """
+        Find the x-value where two curves intersect using linear interpolation.
+        Following the complete formula set from documentation.
+        
+        Args:
+            x: Array of x values (price points)
+            y1: Array of y values for first curve
+            y2: Array of y values for second curve
+            
+        Returns:
+            float: x-value of intersection or 0.0 if no intersection found
+        """
+        try:
+            # Find where the curves cross
+            idx = np.argwhere(np.diff(np.signbit(y1 - y2))).flatten()
+            
+            if len(idx) == 0:
+                print("[WARNING] No intersection found between curves")
+                return 0.0
+            
+            # Get the points before and after intersection
+            i = idx[0]
+            if i >= len(x) - 1:
+                return 0.0
+                
+            x1, x2 = x[i], x[i + 1]
+            y1_1, y1_2 = y1[i], y1[i + 1]
+            y2_1, y2_2 = y2[i], y2[i + 1]
+            
+            # Linear interpolation formula
+            # x = x1 + (x2 - x1) * (y2_1 - y1_1) / ((y2_1 - y1_1) + (y1_2 - y2_2))
+            intersection_x = x1 + (x2 - x1) * (y2_1 - y1_1) / ((y2_1 - y1_1) + (y1_2 - y2_2))
+            
+            # Validate the intersection point
+            if intersection_x <= 0:
+                print("[WARNING] Invalid intersection point (<= 0)")
+                return 0.0
+                
+            return float(intersection_x)
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to find intersection: {str(e)}")
+            return 0.0
+
+    def _clean_data(self, data: pd.DataFrame, column_map: Dict[str, str]) -> pd.DataFrame:
+        """
+        Clean the data by removing rows with missing or invalid responses.
+        
+        Args:
+            data (pd.DataFrame): Input data
+            column_map (Dict[str, str]): Mapping of required columns to actual column names
+            
+        Returns:
+            pd.DataFrame: Cleaned data with only complete responses
+        """
+        print("[DEBUG] Starting data cleaning...")
+        print(f"[DEBUG] Initial data shape: {data.shape}")
+        
+        # Get the actual column names from the mapping
+        columns = list(column_map.values())
+        
+        # Convert all columns to numeric, coercing errors to NaN
+        for col in columns:
+            data[col] = pd.to_numeric(data[col], errors='coerce')
+        
+        # Remove rows where any of the required columns have NaN values
+        cleaned_data = data.dropna(subset=columns)
+        
+        # Remove rows with negative values
+        for col in columns:
+            cleaned_data = cleaned_data[cleaned_data[col] >= 0]
+        
+        print(f"[DEBUG] Data shape after cleaning: {cleaned_data.shape}")
+        print(f"[DEBUG] Removed {data.shape[0] - cleaned_data.shape[0]} rows with incomplete or invalid responses")
+        
+        if cleaned_data.shape[0] == 0:
+            raise ValueError("No valid responses found after cleaning. All responses were either incomplete or invalid.")
+        
+        return cleaned_data
+
+    def _generate_insights(self, results: Dict[str, Any], chat_model: Any) -> str:
+        """
+        Generate insights from the Van Westendorp analysis results.
+        Following the complete formula set from documentation.
+        
+        Args:
+            results: Dictionary containing analysis results
+            chat_model: LLM model for generating insights
+            
+        Returns:
+            str: Formatted insights
+        """
+        try:
+            insights = []
+            
+            for segment_name, segment_results in results.items():
+                segment_insights = []
+                
+                # Extract key metrics
+                pmc = segment_results["pmc"]
+                pme = segment_results["pme"]
+                opp = segment_results["opp"]
+                price_sensitivity = segment_results["price_sensitivity"]
+                sample_size = segment_results["sample_size"]
+                
+                # Calculate range width and percentage
+                range_width = pme - pmc
+                range_percentage = (range_width / pmc) * 100
+                
+                # Generate price sensitivity interpretation
+                if price_sensitivity < 50:
+                    sensitivity_level = "low"
+                elif price_sensitivity < 100:
+                    sensitivity_level = "moderate"
+                else:
+                    sensitivity_level = "high"
+                
+                # Build segment insights
+                segment_insights.extend([
+                    f"Price Range Analysis:",
+                    f"• Acceptable Price Range: ${pmc:.2f} - ${pme:.2f}",
+                    f"• Range Width: ${range_width:.2f} ({range_percentage:.1f}% of PMC)",
+                    f"• Optimal Price Point: ${opp:.2f}",
+                    f"• Price Sensitivity: {price_sensitivity:.1f}% ({sensitivity_level})",
+                    f"• Sample Size: {sample_size} respondents"
+                ])
+                
+                # Add market penetration insights
+                segment_insights.extend([
+                    f"\nMarket Penetration at Key Price Points:",
+                    f"• At ${pmc:.2f} (PMC):",
+                    f"  - Not Too Cheap: {100 - pmc:.1f}%",
+                    f"  - Not Too Expensive: {100 - pme:.1f}%",
+                    f"• At ${opp:.2f} (OPP):",
+                    f"  - Overall Acceptance: {min(100 - pmc, 100 - pme):.1f}%"
+                ])
+                
+                # Add strategic recommendations
+                segment_insights.extend([
+                    f"\nStrategic Recommendations:",
+                    f"• Primary Target Price: ${opp:.2f}",
+                    f"• Price Flexibility: {'High' if range_percentage > 50 else 'Moderate' if range_percentage > 25 else 'Low'}",
+                    f"• Market Sensitivity: {sensitivity_level.capitalize()}",
+                    f"• Pricing Strategy: {'Premium' if opp > (pmc + pme)/2 else 'Value' if opp < (pmc + pme)/2 else 'Balanced'}"
+                ])
+                
+                # Add segment name if multiple segments
+                if len(results) > 1:
+                    insights.append(f"\n=== {segment_name} ===")
+                insights.extend(segment_insights)
+            
+            return "\n".join(insights)
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to generate insights: {str(e)}")
+            return "Unable to generate detailed insights due to an error in the analysis."
+
     def run(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Process the data using Van Westendorp's Price Sensitivity Meter (PSM) methodology.
+        Following the complete formula set from documentation.
         
         Args:
             data (pd.DataFrame): Input data
@@ -296,15 +739,23 @@ class VanWestendorpMCP(MCPBase):
                 - question: Optional follow-up question about the analysis
                 - conversation_context: Optional previous conversation context
                 - auto_map: Boolean indicating whether to handle mapping automatically
+                - filters: Dict of filters to apply (e.g. {"gender": "male"})
+                - segmentation: Optional segmentation parameter
+                - metadata: Dataset metadata
                 
         Returns:
             Dict[str, Any]: Analysis results
         """
+        print("\n[DEBUG] ===== Van Westendorp MCP Processing =====")
+        print(f"[DEBUG] Input data shape: {data.shape}")
+        
         # Check if this is a follow-up question
         if params.get("question"):
+            print(f"[DEBUG] Processing question: {params['question']}")
             # Get the previous analysis result from params
             previous_result = params.get("previous_result")
             if previous_result:
+                print("[DEBUG] Found previous result, handling as follow-up question")
                 result = self.handle_followup_question(
                     params["question"], 
                     previous_result, 
@@ -317,12 +768,64 @@ class VanWestendorpMCP(MCPBase):
                     "context": result["context"]
                 }
         
-        print("[DEBUG] Starting Van Westendorp analysis...")
-        print("[DEBUG] Input data shape:", data.shape)
-        print("[DEBUG] Available columns:", list(data.columns))
+        # Process user request to create analysis plan
+        if params.get("question"):
+            print("[DEBUG] Creating analysis plan from user request")
+            analysis_plan = self._process_user_request(
+                params["question"],
+                params.get("metadata", {}),
+                params.get("conversation_context"),
+                params  # Pass the entire params dict to access chat_model
+            )
+            
+            # Check if we need to ask follow-up questions
+            if analysis_plan.get("followup_questions"):
+                return {
+                    "reply": "I need some clarification before proceeding with the analysis.",
+                    "followup_questions": analysis_plan["followup_questions"],
+                    "context": {
+                        "analysis_type": self.name,
+                        "pending_plan": analysis_plan
+                    }
+                }
+            
+            # Update params with plan
+            params["filters"] = analysis_plan["filters"]
+            params["segmentation"] = analysis_plan["segmentation"]
+            params["analysis_explanation"] = analysis_plan["explanation"]
+            params["segmentation_groups"] = analysis_plan.get("segmentation_groups", [])
         
-        # 1. Get column labels from metadata
+        # Apply any filters
+        filters = params.get("filters", {})
+        if filters:
+            print(f"[DEBUG] Applying filters: {json.dumps(filters, indent=2)}")
+        data = self._apply_filters(data, filters)
+        
+        # Handle segmentation if requested
+        segmentation = params.get("segmentation")
+        if segmentation:
+            print(f"[DEBUG] Applying segmentation by: {segmentation}")
+            # Get segmentation groups from params or calculate them
+            segmentation_groups = params.get("segmentation_groups", [])
+            if not segmentation_groups:
+                segmentation_groups = data[segmentation].unique().tolist()
+            
+            # Create segments dictionary
+            segments = {}
+            for group in segmentation_groups:
+                segment_data = data[data[segmentation] == group]
+                if len(segment_data) > 0:  # Only include segments with data
+                    segments[str(group)] = segment_data
+        else:
+            segments = {"Overall": data}
+        
+        print(f"[DEBUG] Processing {len(segments)} segments")
+        
+        # Get column labels from metadata
         column_labels = params.get("metadata", {})
+        print(f"[DEBUG] MCP received metadata keys: {list(column_labels.keys()) if column_labels else 'None'}")
+        print(f"[DEBUG] MCP received column_labels: {column_labels.get('column_labels', {}) if column_labels else 'None'}")
+        
         if not column_labels:
             print("[WARNING] No metadata provided in params")
             # Try to get metadata from the data loader
@@ -331,249 +834,153 @@ class VanWestendorpMCP(MCPBase):
                 user_id = params.get("user_id")
                 dataset_id = params.get("dataset_id")
                 if user_id and dataset_id:
+                    print(f"[DEBUG] Attempting to load metadata for user_id: {user_id}, dataset_id: {dataset_id}")
                     column_labels = load_metadata(user_id, dataset_id)
-                    print("[DEBUG] Loaded metadata from file:", column_labels)
+                    print(f"[DEBUG] Loaded metadata keys: {list(column_labels.keys()) if column_labels else 'None'}")
             except Exception as e:
                 print(f"[ERROR] Failed to load metadata: {e}")
                 column_labels = {}
         
         if not column_labels:
             raise ValueError("No metadata available for column mapping")
-            
-        print("[DEBUG] Processing metadata for column mapping...")
-        print("[DEBUG] Full metadata structure:", json.dumps(column_labels, indent=2))
         
         # Extract the actual column labels dictionary
         actual_column_labels = column_labels.get("column_labels", {})
+        print(f"[DEBUG] Actual column_labels: {actual_column_labels}")
         if not actual_column_labels:
             raise ValueError("No column_labels found in metadata")
-            
-        print("[DEBUG] Column labels dictionary:", json.dumps(actual_column_labels, indent=2))
-        print("[DEBUG] Number of column labels:", len(actual_column_labels))
         
-        # 2. Check if column mapping is provided in params
-        if params.get("column_map"):
-            print("[DEBUG] Using provided column mapping:", params["column_map"])
-            col_map = params["column_map"]
-        else:
-            # 3. Use LLM to propose mapping
-            prompt = (
-                "You are an expert in survey data analysis. Your task is to analyze the SPSS column labels and find the exact question numbers "
-                "that correspond to the Van Westendorp price sensitivity questions.\n\n"
-                "Look through the values (survey questions) in the column labels dictionary and find questions that ask about:\n"
-                "1. A price point that is 'Too Cheap' or 'Too Low' for the product\n"
-                "2. A price point that represents a 'Bargain' or 'Good Value' for the product\n"
-                "3. A price point where the product is 'Getting Expensive' or 'Starting to be Expensive'\n"
-                "4. A price point that is 'Too Expensive' or 'Too High' for the product\n\n"
-                "Here are the actual column labels from the survey:\n"
-                f"{json.dumps(actual_column_labels, indent=2)}\n\n"
-                "For each of the 4 Van Westendorp questions, return the EXACT key (question number) from the dictionary that contains the matching question.\n"
-                "Return in this format:\n"
-                "too_cheap: [exact_key_from_dict]\n"
-                "bargain: [exact_key_from_dict]\n"
-                "getting_expensive: [exact_key_from_dict]\n"
-                "too_expensive: [exact_key_from_dict]\n\n"
-                "Example: If you find a question like 'Q1: At what price would you consider this product to be too cheap?' with key 'Q1', "
-                "you would return 'too_cheap: Q1'\n\n"
-                "If you can't find a good match for any question, use 'None' for that key."
-            )
-            # Use chat_model from params instead of importing it
-            chat_model = params.get("chat_model")
-            if not chat_model:
-                raise ValueError("chat_model not provided in params")
-            llm_reply = chat_model.generate_reply(prompt)
-            print("[DEBUG] Deepseek LLM reply for column mapping:", llm_reply)
-            # Parse the LLM reply to extract the mapping
-            col_map = {}
-            for line in llm_reply.split('\n'):
-                if ':' in line:
-                    key, value = line.split(':', 1)
-                    key = key.strip().lower()
-                    value = value.strip()
-                    if key in ["too_cheap", "bargain", "getting_expensive", "too_expensive"]:
-                        # Store the question number directly
-                        col_map[key] = value
-                        print(f"[DEBUG] Found match for {key}: {value}")
-            print("[DEBUG] Parsed column mapping:", col_map)
-            print("[DEBUG] Available DataFrame columns:", list(data.columns))
-
-        # 4. Fallback to params or default mapping if LLM mapping is incomplete
-        if params.get("column_map"):
-            default_map = {k: v for k, v in params["column_map"].items() if k in ["too_cheap", "bargain", "getting_expensive", "too_expensive"]}
-            default_map.update(col_map)
-        else:
-            default_map = {k: v for k, v in col_map.items() if k in ["too_cheap", "bargain", "getting_expensive", "too_expensive"]}
-
-        # 5. Extract data using the question numbers
-        print("[DEBUG] Extracting data using question numbers...")
-        
-        # First, create a mask for respondents who answered all questions
-        valid_respondents = data[list(default_map.values())].notna().all(axis=1)
-        print(f"\n[DEBUG] Total respondents: {len(data)}")
-        print(f"[DEBUG] Respondents with all questions answered: {valid_respondents.sum()}")
-        
-        # Filter data for valid respondents
-        filtered_data = data[valid_respondents]
-        print(f"[DEBUG] Using {len(filtered_data)} respondents for analysis")
-        
-        price_data = {}
-        for key, question_num in default_map.items():
-            if question_num in filtered_data.columns:
-                # Get the raw data for valid respondents
-                raw_data = filtered_data[question_num]
-                print(f"\n[DEBUG] Raw data for {key} ({question_num}):")
-                print(f"First 20 rows: {raw_data.head(20).tolist()}")
-                print(f"Data type: {raw_data.dtype}")
-                print(f"Number of values: {len(raw_data)}")
-                
-                # Convert to float
-                try:
-                    price_data[key] = raw_data.astype(float).values
-                except ValueError as e:
-                    print(f"[WARNING] Direct conversion failed for {key}: {e}")
-                    # Try cleaning the data first
-                    cleaned_data = raw_data.str.replace('$', '').str.replace(',', '').astype(float)
-                    price_data[key] = cleaned_data.values
-                
-                print(f"[DEBUG] Processed data for {key}:")
-                print(f"Number of values: {len(price_data[key])}")
-                print(f"First 10 values: {price_data[key][:10]}")
-                print(f"Min value: {min(price_data[key])}")
-                print(f"Max value: {max(price_data[key])}")
-                print(f"Mean value: {np.mean(price_data[key])}")
-            else:
-                print(f"[ERROR] Question number {question_num} not found in DataFrame columns")
-                raise ValueError(f"Required column '{question_num}' for '{key}' not found in data.")
-
-        # 6. Run Van Westendorp analysis
-        print("\n[DEBUG] Running Van Westendorp analysis...")
-        p_tc = price_data["too_cheap"]
-        p_ba = price_data["bargain"]
-        p_ge = price_data["getting_expensive"]
-        p_te = price_data["too_expensive"]
-
-        print("\n[DEBUG] Price arrays summary:")
-        print(f"Too Cheap: {len(p_tc)} values, range: [{min(p_tc)}, {max(p_tc)}]")
-        print(f"Bargain: {len(p_ba)} values, range: [{min(p_ba)}, {max(p_ba)}]")
-        print(f"Getting Expensive: {len(p_ge)} values, range: [{min(p_ge)}, {max(p_ge)}]")
-        print(f"Too Expensive: {len(p_te)} values, range: [{min(p_te)}, {max(p_te)}]")
-
-        # 7. Build Price Grid:
-        print("\n[DEBUG] Building price grid...")
-        all_prices = np.concatenate([p_tc, p_ba, p_ge, p_te])
-        min_price = np.min(all_prices)
-        max_price = np.max(all_prices)
-        print(f"[DEBUG] Price range: {min_price} to {max_price}")
-        
-        # Create a sorted unique price grid
-        price_step = (max_price - min_price) / 100  # Use 100 steps for better precision
-        price_grid = np.arange(min_price, max_price + price_step, price_step)
-        print(f"[DEBUG] Price grid size: {len(price_grid)}")
-        print(f"[DEBUG] Price grid range: {price_grid[0]} to {price_grid[-1]}")
-        
-        # 8. Calculate cumulative distributions
-        print("\n[DEBUG] Calculating cumulative distributions...")
-        n = len(p_tc)  # Number of respondents
-        print(f"[DEBUG] Number of respondents: {n}")
-        
-        # Sort all price arrays for proper cumulative calculation
-        p_tc_sorted = np.sort(p_tc)
-        p_ba_sorted = np.sort(p_ba)
-        p_ge_sorted = np.sort(p_ge)
-        p_te_sorted = np.sort(p_te)
-        
-        # Calculate cumulative percentages for each price point
-        # Too Cheap curve (increasing): % who say price is too cheap
-        tc_cum = np.array([np.sum(p_tc_sorted <= p) for p in price_grid]) / n * 100
-        
-        # Too Expensive curve (decreasing): % who say price is too expensive
-        te_cum = np.array([np.sum(p_te_sorted >= p) for p in price_grid]) / n * 100
-        
-        # Bargain curve (increasing): % who say price is a bargain
-        ba_cum = np.array([np.sum(p_ba_sorted <= p) for p in price_grid]) / n * 100
-        
-        # Getting Expensive curve (decreasing): % who say price is getting expensive
-        ge_cum = np.array([np.sum(p_ge_sorted >= p) for p in price_grid]) / n * 100
-        
-        print("[DEBUG] Cumulative distribution ranges:")
-        print(f"Too Cheap: {min(tc_cum):.1f}% to {max(tc_cum):.1f}%")
-        print(f"Too Expensive: {min(te_cum):.1f}% to {max(te_cum):.1f}%")
-        print(f"Bargain: {min(ba_cum):.1f}% to {max(ba_cum):.1f}%")
-        print(f"Getting Expensive: {min(ge_cum):.1f}% to {max(ge_cum):.1f}%")
-        
-        # 9. Find key price points
-        print("\n[DEBUG] Finding key price points...")
-        
-        # Point of Marginal Cheapness (PMC): where too cheap = getting expensive
-        # This is the lowest price where the product is not considered too cheap
-        pmc_idx = np.argmin(np.abs(tc_cum - ge_cum))
-        pmc = price_grid[pmc_idx]
-        
-        # Point of Marginal Expensiveness (PME): where bargain = too expensive
-        # This is the highest price where the product is not considered too expensive
-        pme_idx = np.argmin(np.abs(ba_cum - te_cum))
-        pme = price_grid[pme_idx]
-        
-        # Optimal Price Point (OPP): where too cheap = too expensive
-        # This is the price where the product is neither too cheap nor too expensive
-        opp_idx = np.argmin(np.abs(tc_cum - te_cum))
-        opp = price_grid[opp_idx]
-        
-        print("[DEBUG] Key price points:")
-        print(f"PMC: ${pmc:.2f}")
-        print(f"PME: ${pme:.2f}")
-        print(f"OPP: ${opp:.2f}")
-        
-        # 10. Calculate price sensitivity
-        # Price sensitivity is the percentage difference between PME and PMC
-        price_sensitivity = (pme - pmc) / pmc * 100
-        
-        # After calculating all the metrics, generate visualizations
-        visualizations = self.generate_visualizations(
-            price_grid=price_grid,
-            tc_cum=tc_cum,
-            te_cum=te_cum,
-            ba_cum=ba_cum,
-            ge_cum=ge_cum,
-            pmc=pmc,
-            pme=pme,
-            opp=opp,
-            price_sensitivity=price_sensitivity
+        # Use LLM to propose mapping
+        prompt = (
+            "Given these column labels, which columns should be used for the Van Westendorp analysis?\n"
+            "We need columns for: too_cheap, bargain, getting_expensive, too_expensive\n\n"
+            f"Available columns:\n{json.dumps(actual_column_labels, indent=2)}\n\n"
+            "Reply with a JSON object mapping each required field to a column name. Do not include any markdown formatting or backticks in your response."
         )
+        mapping_text = params["chat_model"].generate_reply(prompt)
         
-        # Build the final results
-        results = {
-            "visualizations": visualizations,
-            "insights": (
-                f"Using {n} respondents, the Van Westendorp analysis yields:\n"
-                f"• Point of Marginal Cheapness (PMC): ${pmc:.2f}\n"
-                f"• Point of Marginal Expensiveness (PME): ${pme:.2f}\n"
-                f"• Optimal Price (where acceptable = expensive): ${opp:.2f}\n"
-                f"The acceptable price range (between PMC and PME) suggests that most respondents "
-                f"find prices between ${pmc:.2f} and ${pme:.2f} acceptable. "
-                f"Above PME, more respondents consider the product too expensive."
+        try:
+            # Clean the response text to ensure it's valid JSON
+            mapping_text = mapping_text.strip()
+            if mapping_text.startswith('```json'):
+                mapping_text = mapping_text[7:]
+            if mapping_text.endswith('```'):
+                mapping_text = mapping_text[:-3]
+            mapping_text = mapping_text.strip()
+            
+            column_map = json.loads(mapping_text)
+            
+            # Validate the mapping
+            required_fields = ["too_cheap", "bargain", "getting_expensive", "too_expensive"]
+            for field in required_fields:
+                if field not in column_map:
+                    raise ValueError(f"Missing required field in mapping: {field}")
+                if column_map[field] not in data.columns:
+                    raise ValueError(f"Column {column_map[field]} not found in dataset")
+            
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"[ERROR] Failed to get valid column mapping: {str(e)}")
+            raise ValueError(f"Could not determine correct column mapping: {str(e)}")
+        
+        # Run analysis for each segment
+        results = {}
+        visualizations = {"charts": [], "tables": []}
+        
+        for segment_name, segment_data in segments.items():
+            print(f"[DEBUG] Processing segment: {segment_name}")
+            
+            try:
+                # Clean the data first
+                cleaned_data = self._clean_data(segment_data, column_map)
+                
+                # Extract price columns using the mapping
+                tc_col = column_map["too_cheap"]
+                ba_col = column_map["bargain"]
+                ge_col = column_map["getting_expensive"]
+                te_col = column_map["too_expensive"]
+                
+                # Calculate price points and curves
+                price_grid, tc_cum, te_cum, ba_cum, ge_cum = self._calculate_curves(
+                    cleaned_data[tc_col],
+                    cleaned_data[te_col],
+                    cleaned_data[ba_col],
+                    cleaned_data[ge_col]
+                )
+                
+                # Find intersection points following the formula
+                # PMC: Where "too cheap" equals "getting expensive"
+                pmc = self._find_intersection(price_grid, tc_cum, ge_cum)
+                
+                # PME: Where "bargain" equals "too expensive"
+                pme = self._find_intersection(price_grid, ba_cum, te_cum)
+                
+                # OPP: Where "too cheap" equals "too expensive"
+                opp = self._find_intersection(price_grid, tc_cum, te_cum)
+                
+                # Calculate price sensitivity using Newton-Miller-Smith formula
+                if pmc > 0 and pme > 0:
+                    price_sensitivity = (pme - pmc) / pmc * 100
+                else:
+                    price_sensitivity = 0.0
+                    print("[WARNING] Could not calculate price sensitivity due to invalid intersection points")
+                
+                # Store results for this segment
+                results[segment_name] = {
+                    "pmc": float(pmc),
+                    "pme": float(pme),
+                    "opp": float(opp),
+                    "price_sensitivity": float(price_sensitivity),
+                    "sample_size": len(cleaned_data)
+                }
+                
+                # Generate visualizations for this segment
+                segment_viz = self.generate_visualizations(
+                    price_grid, tc_cum, te_cum, ba_cum, ge_cum,
+                    pmc, pme, opp, price_sensitivity
+                )
+                
+                # Add segment name and sample size to visualizations
+                for chart in segment_viz.get("charts", []):
+                    chart["title"] = f"{chart['title']} - {segment_name} (n={len(cleaned_data)})"
+                for table in segment_viz.get("tables", []):
+                    table["title"] = f"{table['title']} - {segment_name} (n={len(cleaned_data)})"
+                    # Add sample size to table data
+                    table["data"].append({
+                        "metric": "Sample Size",
+                        "value": str(len(cleaned_data))
+                    })
+                
+                # Add to overall visualizations
+                visualizations["charts"].extend(segment_viz.get("charts", []))
+                visualizations["tables"].extend(segment_viz.get("tables", []))
+                
+            except Exception as e:
+                print(f"[ERROR] Failed to process segment {segment_name}: {str(e)}")
+                raise ValueError(f"Failed to process segment {segment_name}: {str(e)}")
+        
+        # Generate insights using the enhanced method
+        insights = self._generate_insights(results, params.get("chat_model"))
+        
+        print("[DEBUG] ======================================\n")
+        
+        # Create response
+        return {
+            "reply": (
+                "I've completed the Van Westendorp analysis"
+                + (f" for {len(segments)} segments" if len(segments) > 1 else "")
+                + ". Here are the results and insights."
             ),
+            "visualizations": visualizations,
+            "insights": insights,
             "context": {
                 "analysis_type": self.name,
-                "variables_used": self.required_columns
+                "variables_used": self.required_columns,
+                "column_map": column_map,
+                "filters": filters,
+                "segmentation": segmentation,
+                "segmentation_groups": params.get("segmentation_groups", []),
+                "results": results
             }
         }
-        
-        # Polish the main reply using the chat model
-        chat_model = params.get("chat_model")
-        if chat_model:
-            reply_prompt = (
-                f"Given the following Van Westendorp analysis results, provide a clear, business-focused summary and next steps for a product manager:\n\n"
-                f"{results['insights']}\n"
-                "Be concise and actionable."
-            )
-            reply = chat_model.generate_reply(reply_prompt)
-        else:
-            reply = results['insights']
-        results['reply'] = reply
-        
-        print("\n[DEBUG] Analysis complete")
-        print("[DEBUG] Sending visualizations:", json.dumps(visualizations, indent=2))
-        return results
 
 # Logic for Van Westendorp price sensitivity analysis 

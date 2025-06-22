@@ -114,11 +114,24 @@ class AgentController:
 
     def handle_chat(self, user_id: str, chat_req: ChatRequest) -> ChatResponse:
         """
-        Handle chat requests using existing dataset IDs.
-        Dataset IDs must be created during file upload and cannot be created during chat.
+        Handle chat requests by routing them to the appropriate MCP.
+        Once an MCP is determined, all subsequent messages are passed directly to that MCP
+        unless a new analysis type is explicitly requested.
+        
+        Args:
+            user_id (str): User identifier
+            chat_req (ChatRequest): Chat request containing message and context
+            
+        Returns:
+            ChatResponse: Response from the MCP
         """
         text = chat_req.message.lower().strip()
-        print("[DEBUG] AgentController received message:", text)
+        print("\n[DEBUG] ===== Agent Controller Processing =====")
+        print(f"[DEBUG] User Message: {text}")
+
+        # Check if user wants to clear chat history
+        if text in ["clear", "clear chat", "reset", "reset chat", "start over", "new chat"]:
+            return self._clear_chat_history()
 
         # Validate dataset_id exists
         if not chat_req.dataset_id:
@@ -132,114 +145,124 @@ class AgentController:
 
         # Initialize or get conversation context
         context = chat_req.conversation_context or {}
-        print(f"[DEBUG] Current conversation context: {json.dumps(context, indent=2)}")
-
-        # Check if this is a new dataset by comparing with last dataset_id in context
-        last_dataset_id = context.get('last_dataset_id')
-        if last_dataset_id != chat_req.dataset_id:
-            print(f"[DEBUG] New dataset detected. Clearing conversation context.")
-            context = {
-                'last_dataset_id': chat_req.dataset_id,
-                'analysis_type': None,
-                'previous_result': None
-            }
-            print(f"[DEBUG] Reset context for new dataset: {json.dumps(context, indent=2)}")
 
         # Check if we're in an active MCP conversation
         active_analysis = context.get('analysis_type')
-        print(f"[DEBUG] Active analysis type: {active_analysis}")
-        
-        # If we have a last_answer about confirming mapping but no active_analysis, set it
-        if not active_analysis and context.get('last_answer'):
-            last_a = context['last_answer'].lower()
-            if 'before running the' in last_a and 'analysis' in last_a:
-                # Extract analysis type from the last answer
-                if 'van westendorp' in last_a:
-                    active_analysis = 'van_westendorp'
-                    context['analysis_type'] = active_analysis
-                    print(f"[DEBUG] Setting active analysis type from last answer: {active_analysis}")
-        
-        if active_analysis and active_analysis in self.mcp_mapping:
-            print(f"[DEBUG] Continuing conversation with MCP: {active_analysis}")
+
+        # Only check for new analysis type if:
+        # 1. No active MCP, or
+        # 2. User explicitly mentions a different analysis type
+        should_check_new_analysis = (
+            not active_analysis or 
+            any(keyword in text for keyword in [
+                "run", "perform", "do", "analyze", "analysis", "show",
+                "van westendorp", "gabor granger", "segmentation", "satisfaction"
+            ])
+        )
+
+        if should_check_new_analysis:
+            # Check if user is requesting a new analysis type
+            analysis_info = self._extract_analysis_type_with_deepseek(text, context)
+            new_analysis_type = analysis_info["analysis_type"]
             
-            # Handle follow-up questions
-            print(f"[DEBUG] Handling follow-up question for {active_analysis}")
+            # Only switch if user explicitly requested a different analysis
+            if new_analysis_type != "unknown" and new_analysis_type != active_analysis:
+                print(f"[DEBUG] User requested new analysis type: {new_analysis_type}")
+                active_analysis = new_analysis_type
+                context['analysis_type'] = new_analysis_type
+                context['filters'] = analysis_info.get('filters', {})
+                context['segmentation'] = analysis_info.get('segmentation')
+        
+        # If we have an active MCP, pass the message directly to it
+        if active_analysis and active_analysis in self.mcp_mapping:
+            print(f"[DEBUG] Routing to MCP: {active_analysis}")
             df = load_dataset(user_id, chat_req.dataset_id)
-            metadata = load_metadata(user_id, chat_req.dataset_id)
+            
+            # Load metadata with error handling
+            try:
+                metadata = load_metadata(user_id, chat_req.dataset_id)
+            except Exception as e:
+                print(f"[DEBUG] Failed to load metadata: {e}")
+                print(f"[DEBUG] Attempting to force regenerate metadata")
+                try:
+                    from .services.data_loader import force_regenerate_metadata, test_metadata_loading
+                    print(f"[DEBUG] Testing metadata loading first...")
+                    test_metadata = test_metadata_loading(user_id, chat_req.dataset_id)
+                    metadata = test_metadata
+                    print(f"[DEBUG] Successfully loaded metadata using test function")
+                except Exception as e2:
+                    print(f"[ERROR] Failed to regenerate metadata: {e2}")
+                    return ChatResponse(reply=f"Error loading dataset metadata: {e2}")
+            
+            print(f"[DEBUG] Loaded metadata keys: {list(metadata.keys()) if metadata else 'None'}")
+            print(f"[DEBUG] Complete metadata content:")
+            if metadata:
+                for key, value in metadata.items():
+                    if key == 'column_labels':
+                        print(f"  {key}: {value}")
+                        if isinstance(value, dict):
+                            print(f"    Number of items: {len(value)}")
+                            if len(value) == 0:
+                                print(f"    WARNING: column_labels is empty!")
+                            else:
+                                print(f"    First few items: {list(value.items())[:3]}")
+                    elif key == 'columns':
+                        print(f"  {key}: {value[:10] if isinstance(value, list) and len(value) > 10 else value}")
+                    elif key == 'value_labels':
+                        print(f"  {key}: {len(value) if isinstance(value, dict) else value} items")
+                    else:
+                        print(f"  {key}: {value}")
+            else:
+                print("  No metadata loaded")
+            
+            # Apply any filters from context
+            if context.get('filters'):
+                for column, value in context['filters'].items():
+                    if column in df.columns:
+                        df = df[df[column] == value]
+            
             params = {
                 "question": text,
                 "previous_result": context.get('previous_result'),
                 "conversation_context": context,
-                "metadata": metadata,
-                "chat_model": self.chat_model
-            }
-            try:
-                mcp: MCPBase = self.mcp_mapping[active_analysis]
-                result = mcp.run(df, params)
-                print(f"[DEBUG] MCP '{active_analysis}' handled follow-up question")
-                return self._create_chat_response(result, active_analysis)
-            except Exception as e:
-                print(f"[DEBUG] Error handling follow-up question for '{active_analysis}':", e)
-                return ChatResponse(reply=f"Error handling follow-up question: {e}")
-
-        # Start new analysis if user requests it or if no active analysis
-        if "run" in text or "start" in text or "analyze" in text or not active_analysis:
-            print("[DEBUG] Starting new analysis")
-            analysis_key = self._extract_analysis_type_with_deepseek(text, context)
-            print(f"[DEBUG] Determined analysis type: {analysis_key}")
-
-            if not analysis_key or analysis_key not in self.mcp_mapping:
-                print(f"[DEBUG] No valid analysis type found. Using fallback.")
-                reply = self.chat_model.generate_reply(text)
-                return ChatResponse(reply=reply)
-
-            print(f"[DEBUG] Initializing MCP: {analysis_key}")
-            df = load_dataset(user_id, chat_req.dataset_id)
-            metadata = load_metadata(user_id, chat_req.dataset_id)
-            params = {
                 "metadata": metadata,
                 "chat_model": self.chat_model,
-                "conversation_context": context,
-                "auto_map": True  # Tell MCP to handle mapping automatically
+                "filters": context.get('filters', {}),
+                "segmentation": context.get('segmentation'),
+                "column_map": context.get('column_map'),
+                "column_map_confirmed": context.get('column_map_confirmed', False),
+                "user_id": user_id,
+                "dataset_id": chat_req.dataset_id
             }
-            if chat_req.filter_column and chat_req.filter_value is not None:
-                params["filter_column"] = chat_req.filter_column
-                params["filter_value"] = chat_req.filter_value
-
-            try:
-                mcp: MCPBase = self.mcp_mapping[analysis_key]
-                result = mcp.run(df, params)
-                print(f"[DEBUG] MCP '{analysis_key}' initialized")
-                # Set the analysis type in the context
-                context['analysis_type'] = analysis_key
-                return self._create_chat_response(result, analysis_key)
-            except Exception as e:
-                print(f"[DEBUG] Error initializing MCP '{analysis_key}':", e)
-                return ChatResponse(reply=f"Error starting {analysis_key} analysis: {e}")
-        
-        # If we get here, treat it as a follow-up question to the last active analysis
-        if active_analysis:
-            print(f"[DEBUG] Treating as follow-up question for {active_analysis}")
-            df = load_dataset(user_id, chat_req.dataset_id)
-            metadata = load_metadata(user_id, chat_req.dataset_id)
-            params = {
-                "question": text,
-                "previous_result": context.get('previous_result'),
-                "conversation_context": context,
-                "metadata": metadata,
-                "chat_model": self.chat_model
-            }
+            
+            print("\n[DEBUG] ===== Agent Controller -> MCP Communication =====")
+            print(f"[DEBUG] MCP: {active_analysis}")
+            print(f"[DEBUG] Question: {text}")
+            print(f"[DEBUG] Metadata passed: {list(metadata.keys()) if metadata else 'None'}")
+            print(f"[DEBUG] Context: {json.dumps(context, indent=2)}")
+            print("[DEBUG] ==============================================\n")
+            
             try:
                 mcp: MCPBase = self.mcp_mapping[active_analysis]
                 result = mcp.run(df, params)
-                print(f"[DEBUG] MCP '{active_analysis}' handled follow-up question")
+                
+                print("\n[DEBUG] ===== MCP -> Agent Controller Response =====")
+                print(f"[DEBUG] MCP: {active_analysis}")
+                print(f"[DEBUG] Reply: {result.get('reply', 'No reply')}")
+                print(f"[DEBUG] Context: {json.dumps(result.get('context', {}), indent=2)}")
+                print("[DEBUG] ==============================================\n")
+                
+                # Update context with new information from MCP
+                if result.get("context"):
+                    context.update(result["context"])
+                
                 return self._create_chat_response(result, active_analysis)
             except Exception as e:
-                print(f"[DEBUG] Error handling follow-up question for '{active_analysis}':", e)
-                return ChatResponse(reply=f"Error handling follow-up question: {e}")
+                print(f"[ERROR] MCP '{active_analysis}' failed: {str(e)}")
+                return ChatResponse(reply=f"Error processing your request: {e}")
         
-        # If no active analysis and no explicit request, use fallback
-        print("[DEBUG] No active analysis and no explicit request. Using fallback.")
+        # If no active MCP and no new analysis requested, use fallback
+        print("[DEBUG] No active MCP and no new analysis requested. Using fallback.")
         reply = self.chat_model.generate_reply(text)
         return ChatResponse(reply=reply)
 
@@ -272,39 +295,119 @@ class AgentController:
 
         return chat_response
 
-    def _extract_analysis_type_with_deepseek(self, message: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def _extract_analysis_type_with_deepseek(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Use Deepseek to classify the analysis type from the user's message.
+        Use Deepseek to classify the analysis type and extract parameters from the user's message.
         If context is provided, use it to better understand the user's intent.
+        
+        Returns:
+            Dict containing:
+            - analysis_type: str - The type of analysis requested
+            - filters: Dict[str, Any] - Any filters specified (e.g. {"gender": "male"})
+            - segmentation: Optional[str] - Any segmentation requested
         """
         # If this is a confirmation or simple response, return the existing analysis type
         if context and context.get('analysis_type'):
             if message.lower() in ["yes", "confirm", "ok", "sure", "proceed"]:
-                return context['analysis_type']
+                return {
+                    "analysis_type": context['analysis_type'],
+                    "filters": context.get('filters', {}),
+                    "segmentation": context.get('segmentation')
+                }
             if message.lower() in ["no", "cancel", "stop"]:
-                return "unknown"
+                return {
+                    "analysis_type": "unknown",
+                    "filters": {},
+                    "segmentation": None
+                }
 
-        # For new analysis requests, use the LLM to classify
+        # For new analysis requests, use the LLM to classify and extract parameters
         prompt = (
-            "Given the following user request, which analysis type is being requested? "
-            "Reply with EXACTLY one of these options (no underscores): vanwestendorp, gaborgranger, segmentation, satisfaction, or 'unknown'.\n"
+            "Given the following user request, extract the analysis type and any filters/segmentation requested.\n"
+            "Reply in JSON format with these fields:\n"
+            "- analysis_type: one of [vanwestendorp, gaborgranger, segmentation, satisfaction, unknown]\n"
+            "- filters: dict of any filters specified (e.g. {\"gender\": \"male\"})\n"
+            "- segmentation: string if segmentation is requested, null otherwise\n\n"
             f"User request: {message}\n"
-            "Analysis type:"
+            "Response:"
         )
         reply = self.chat_model.generate_reply(prompt)
-        print(f"[DEBUG] Deepseek raw reply: {reply}")
+        print(f"[DEBUG] Raw LLM Response: {reply}")
         
-        # Clean up the reply to match our key format
-        reply = reply.strip().lower().replace('_', '')
-        print(f"[DEBUG] Cleaned reply: {reply}")
-        print(f"[DEBUG] Available MCP keys: {list(self.mcp_mapping.keys())}")
-        
-        # Check if the cleaned reply matches any MCP key
-        if reply in self.mcp_mapping:
-            print(f"[DEBUG] Found matching MCP key: {reply}")
-            return reply
+        try:
+            # Clean up the response by removing markdown formatting if present
+            cleaned_reply = reply
+            if "```json" in reply:
+                # Extract content between ```json and ```
+                json_match = re.search(r'```json\n(.*?)\n```', reply, re.DOTALL)
+                if json_match:
+                    cleaned_reply = json_match.group(1)
+            elif "```" in reply:
+                # Extract content between ``` and ```
+                json_match = re.search(r'```\n(.*?)\n```', reply, re.DOTALL)
+                if json_match:
+                    cleaned_reply = json_match.group(1)
             
-        # Fallback: try to match common typos or synonyms
+            # Parse the cleaned JSON response
+            result = json.loads(cleaned_reply)
+            print(f"[DEBUG] Parsed JSON: {json.dumps(result, indent=2)}")
+            
+            # Clean up the analysis type to match our key format
+            analysis_type = result.get("analysis_type", "").strip().lower().replace('_', '')
+            
+            # Check if the cleaned analysis type matches any MCP key
+            if analysis_type in self.mcp_mapping:
+                return {
+                    "analysis_type": analysis_type,
+                    "filters": result.get("filters", {}),
+                    "segmentation": result.get("segmentation")
+                }
+                
+            # Fallback: try to match common typos or synonyms
+            lower_msg = message.lower()
+            if "van" in lower_msg or "westendorp" in lower_msg or "westerndrop" in lower_msg or "price sensitivity" in lower_msg:
+                return {
+                    "analysis_type": "vanwestendorp",
+                    "filters": result.get("filters", {}),
+                    "segmentation": result.get("segmentation")
+                }
+            if "gabor" in lower_msg or "granger" in lower_msg:
+                return {
+                    "analysis_type": "gaborgranger",
+                    "filters": result.get("filters", {}),
+                    "segmentation": result.get("segmentation")
+                }
+            if "segment" in lower_msg:
+                return {
+                    "analysis_type": "segmentation",
+                    "filters": result.get("filters", {}),
+                    "segmentation": result.get("segmentation")
+                }
+            if "satisfaction" in lower_msg or "nps" in lower_msg:
+                return {
+                    "analysis_type": "satisfaction",
+                    "filters": result.get("filters", {}),
+                    "segmentation": result.get("segmentation")
+                }
+                
+            return {
+                "analysis_type": "unknown",
+                "filters": {},
+                "segmentation": None
+            }
+            
+        except json.JSONDecodeError as e:
+            print(f"[ERROR] Failed to parse LLM response as JSON: {reply}")
+            print(f"[ERROR] JSON Parse Error: {str(e)}")
+            # Fallback to simple analysis type extraction
+            return {
+                "analysis_type": self._extract_analysis_type_simple(message),
+                "filters": {},
+                "segmentation": None
+            }
+            
+    def _extract_analysis_type_simple(self, message: str) -> str:
+        """Simple fallback method to extract analysis type without parameters."""
         lower_msg = message.lower()
         if "van" in lower_msg or "westendorp" in lower_msg or "westerndrop" in lower_msg or "price sensitivity" in lower_msg:
             return "vanwestendorp"
@@ -356,5 +459,18 @@ class AgentController:
         except Exception as e:
             print(f"[ERROR] MCP '{mcp_name}' failed: {str(e)}")
             raise
+
+    def _clear_chat_history(self) -> ChatResponse:
+        """
+        Clear the chat history by returning a response with an empty context.
+        
+        Returns:
+            ChatResponse: Response indicating chat history has been cleared
+        """
+        print("[DEBUG] Clearing chat history")
+        return ChatResponse(
+            reply="Chat history has been cleared. You can start a new conversation.",
+            context={}  # Empty context will clear the history
+        )
 
 # Logic for handling agent-related API endpoints 
