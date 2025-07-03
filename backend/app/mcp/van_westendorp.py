@@ -323,128 +323,131 @@ class VanWestendorpMCP(MCPBase):
             for info in questions_info:
                 print(f"- {info['variable']}: {info['question']}")
             
-            # Get segmentation from context or params
-            segmentation = context.get('segmentation') if context else params.get('segmentation')
+            # Check if user is requesting segmentation in the question
+            question_lower = question.lower()
+            segmentation_requested = None
             
-            # Step 1: Find matching variable by checking all available metadata
-            if segmentation and segmentation not in metadata.get('columns', []):
-                if not params or 'chat_model' not in params:
-                    raise ValueError("chat_model not provided in params")
-                
-                # Create a focused prompt to find matching question using all available metadata
-                prompt = (
-                    "Given the following questions and their metadata from the survey, find the one that best matches the segmentation request.\n"
-                    f"Segmentation requested: {segmentation}\n\n"
-                    "Available questions with their metadata:\n" +
-                    "\n".join(
-                        f"- Variable: {info['variable']}\n"
-                        f"  Question: {info['question']}\n"
-                        f"  Variable Label: {info['variable_label']}\n"
-                        f"  Value Labels: {info['value_labels']}\n"
-                        f"  Measure: {info['measure']}\n"
-                        f"  Format: {info['format']}"
-                        for info in questions_info
-                    ) +
-                    "\n\nInstructions:\n"
-                    "1. Look for questions that match the segmentation request semantically\n"
-                    "2. Consider both the question text and variable labels\n"
-                    "3. For age, look for questions asking about age or containing age-related terms\n"
-                    "4. Also check the value labels for age ranges or age-related values\n"
-                    "5. Reply with the EXACT variable name that best matches\n"
-                    "6. If no match is found, reply with 'NO_MATCH'"
-                )
-                
-                print(f"[DEBUG] Sending prompt to LLM for variable matching:\n{prompt}")
-                
-                # Get LLM's response
-                response = params['chat_model'].generate_reply(prompt)
-                matched_var = response.strip()
-                
-                print(f"[DEBUG] LLM matched variable: {matched_var}")
-                
-                if matched_var == 'NO_MATCH':
-                    raise ValueError(f"Could not find matching variable for segmentation '{segmentation}'")
-                
-                if matched_var not in metadata.get('columns', []):
-                    raise ValueError(f"LLM returned invalid variable name: {matched_var}")
-                
-                # Get the complete metadata for the matched variable
-                matched_info = next((info for info in questions_info if info['variable'] == matched_var), None)
-                if not matched_info:
-                    raise ValueError(f"Could not find metadata for matched variable: {matched_var}")
-                
-                print(f"[DEBUG] Matched variable: {matched_info['variable']}")
-                print(f"[DEBUG] Matched question: {matched_info['question']}")
-                
-                # Create segmentation groups based on value labels
-                segmentation_groups = {}
-                for value, label in matched_info['value_labels'].items():
-                    segmentation_groups[label] = value
-                
-                print(f"[DEBUG] Created segmentation groups: {segmentation_groups}")
-                
-                return {
-                    'filters': {},
-                    'segmentation': matched_var,
-                    'explanation': f"Running Van Westendorp analysis segmented by {matched_info['question']}",
-                    'followup_questions': [],
-                    'segmentation_groups': segmentation_groups
-                }
-            
-            # If no segmentation specified, check if we need to ask for it
-            if "by" in question.lower():
-                # Extract potential segmentation variable from question
-                parts = question.lower().split("by")
+            # Look for "by" patterns in the question
+            if "by" in question_lower:
+                parts = question_lower.split("by")
                 if len(parts) > 1:
                     potential_seg = parts[1].strip()
+                    # Clean up common words
+                    potential_seg = potential_seg.replace("group", "").replace("groups", "").replace("s", "").strip()
+                    segmentation_requested = potential_seg
+                    print(f"[DEBUG] Detected segmentation request: '{potential_seg}' from question")
+            
+            # Get segmentation from context, params, or detected from question
+            segmentation = context.get('segmentation') if context else params.get('segmentation')
+            if not segmentation and segmentation_requested:
+                segmentation = segmentation_requested
+            
+            # Step 1: Handle segmentation if requested
+            if segmentation:
+                print(f"[DEBUG] Processing segmentation request: '{segmentation}'")
+                
+                # Check if segmentation variable is already in columns
+                if segmentation in metadata.get('columns', []):
+                    print(f"[DEBUG] Segmentation variable '{segmentation}' found in columns")
                     
-                    # Use LLM to find matching variable
-                    if params and 'chat_model' in params:
-                        prompt = (
-                            "Given the following questions and their metadata from the survey, find the one that best matches the segmentation request.\n"
-                            f"Segmentation requested: {potential_seg}\n\n"
-                            "Available questions with their metadata:\n" +
-                            "\n".join(
-                                f"- Variable: {info['variable']}\n"
-                                f"  Question: {info['question']}\n"
-                                f"  Variable Label: {info['variable_label']}\n"
-                                f"  Value Labels: {info['value_labels']}\n"
-                                f"  Measure: {info['measure']}\n"
-                                f"  Format: {info['format']}"
-                                for info in questions_info
-                            ) +
-                            "\n\nInstructions:\n"
-                            "1. Look for questions that match the segmentation request semantically\n"
-                            "2. Consider both the question text and variable labels\n"
-                            "3. For age, look for questions asking about age or containing age-related terms\n"
-                            "4. Also check the value labels for age ranges or age-related values\n"
-                            "5. Reply with the EXACT variable name that best matches\n"
-                            "6. If no match is found, reply with 'NO_MATCH'"
-                        )
+                    # Get the metadata for this variable
+                    var_info = next((info for info in questions_info if info['variable'] == segmentation), None)
+                    if var_info:
+                        # Create segmentation groups based on value labels
+                        segmentation_groups = {}
+                        for value, label in var_info['value_labels'].items():
+                            segmentation_groups[label] = value
                         
-                        print(f"[DEBUG] Sending prompt to LLM for variable matching:\n{prompt}")
+                        print(f"[DEBUG] Created segmentation groups: {segmentation_groups}")
                         
-                        response = params['chat_model'].generate_reply(prompt)
-                        matched_var = response.strip()
-                        
-                        print(f"[DEBUG] LLM matched variable: {matched_var}")
-                        
-                        if matched_var != 'NO_MATCH' and matched_var in metadata.get('columns', []):
-                            # Get the complete metadata for the matched variable
-                            matched_info = next((info for info in questions_info if info['variable'] == matched_var), None)
-                            if matched_info:
-                                # Create segmentation groups based on value labels
-                                segmentation_groups = {}
-                                for value, label in matched_info['value_labels'].items():
-                                    segmentation_groups[label] = value
-                                
-                                return {
-                                    'filters': {},
-                                    'segmentation': matched_var,
-                                    'explanation': f"Running Van Westendorp analysis segmented by {matched_info['question']}",
-                                    'followup_questions': [],
-                                    'segmentation_groups': segmentation_groups
-                                }
+                        return {
+                            'filters': {},
+                            'segmentation': segmentation,
+                            'explanation': f"Running Van Westendorp analysis segmented by {var_info['question']}",
+                            'followup_questions': [],
+                            'segmentation_groups': segmentation_groups
+                        }
+                
+                # If not found in columns, try to find it using LLM
+                if segmentation not in metadata.get('columns', []):
+                    if not params or 'chat_model' not in params:
+                        raise ValueError("chat_model not provided in params")
+                    
+                    # Create a focused prompt to find matching question using all available metadata
+                    prompt = (
+                        "Given the following questions and their metadata from the survey, find the one that best matches the segmentation request.\n"
+                        f"Segmentation requested: {segmentation}\n\n"
+                        "Available questions with their metadata:\n" +
+                        "\n".join(
+                            f"- Variable: {info['variable']}\n"
+                            f"  Question: {info['question']}\n"
+                            f"  Variable Label: {info['variable_label']}\n"
+                            f"  Value Labels: {info['value_labels']}\n"
+                            f"  Measure: {info['measure']}\n"
+                            f"  Format: {info['format']}"
+                            for info in questions_info
+                        ) +
+                        "\n\nInstructions:\n"
+                        "1. Look for questions that match the segmentation request semantically\n"
+                        "2. Consider both the question text and variable labels\n"
+                        "3. For age, look for questions asking about age or containing age-related terms\n"
+                        "4. Also check the value labels for age ranges or age-related values\n"
+                        "5. Reply with ONLY the EXACT variable name (e.g., 'D4' or 'Q1')\n"
+                        "6. Do not include any explanation or additional text\n"
+                        "7. If no match is found, reply with 'NO_MATCH'"
+                    )
+                    
+                    print(f"[DEBUG] Sending prompt to LLM for variable matching:\n{prompt}")
+                    
+                    # Get LLM's response
+                    response = params['chat_model'].generate_reply(prompt)
+                    matched_var = response.strip()
+                    
+                    print(f"[DEBUG] LLM raw response: {matched_var}")
+                    
+                    # Clean up the response to extract just the variable name
+                    if "Variable:" in matched_var:
+                        # Extract variable name from response like "Variable: D4"
+                        import re
+                        var_match = re.search(r'Variable:\s*(\w+)', matched_var)
+                        if var_match:
+                            matched_var = var_match.group(1)
+                            print(f"[DEBUG] Extracted variable name: {matched_var}")
+                    elif ":" in matched_var:
+                        # Extract variable name from response like "D4: What is your age?"
+                        matched_var = matched_var.split(":")[0].strip()
+                        print(f"[DEBUG] Extracted variable name from colon: {matched_var}")
+                    
+                    print(f"[DEBUG] Final matched variable: {matched_var}")
+                    
+                    if matched_var == 'NO_MATCH':
+                        raise ValueError(f"Could not find matching variable for segmentation '{segmentation}'")
+                    
+                    if matched_var not in metadata.get('columns', []):
+                        raise ValueError(f"LLM returned invalid variable name: {matched_var}")
+                    
+                    # Get the complete metadata for the matched variable
+                    matched_info = next((info for info in questions_info if info['variable'] == matched_var), None)
+                    if not matched_info:
+                        raise ValueError(f"Could not find metadata for matched variable: {matched_var}")
+                    
+                    print(f"[DEBUG] Matched variable: {matched_info['variable']}")
+                    print(f"[DEBUG] Matched question: {matched_info['question']}")
+                    
+                    # Create segmentation groups based on value labels
+                    segmentation_groups = {}
+                    for value, label in matched_info['value_labels'].items():
+                        segmentation_groups[label] = value
+                    
+                    print(f"[DEBUG] Created segmentation groups: {segmentation_groups}")
+                    
+                    return {
+                        'filters': {},
+                        'segmentation': matched_var,
+                        'explanation': f"Running Van Westendorp analysis segmented by {matched_info['question']}",
+                        'followup_questions': [],
+                        'segmentation_groups': segmentation_groups
+                    }
             
             # Default case: no segmentation
             return {
@@ -806,20 +809,31 @@ class VanWestendorpMCP(MCPBase):
         if segmentation:
             print(f"[DEBUG] Applying segmentation by: {segmentation}")
             # Get segmentation groups from params or calculate them
-            segmentation_groups = params.get("segmentation_groups", [])
-            if not segmentation_groups:
-                segmentation_groups = data[segmentation].unique().tolist()
+            segmentation_groups = params.get("segmentation_groups", {})
             
-            # Create segments dictionary
-            segments = {}
-            for group in segmentation_groups:
-                segment_data = data[data[segmentation] == group]
-                if len(segment_data) > 0:  # Only include segments with data
-                    segments[str(group)] = segment_data
+            if segmentation_groups:
+                print(f"[DEBUG] Using provided segmentation groups: {segmentation_groups}")
+                # Use the provided segmentation groups (from value labels)
+                segments = {}
+                for label, value in segmentation_groups.items():
+                    segment_data = data[data[segmentation] == float(value)]
+                    if len(segment_data) > 0:  # Only include segments with data
+                        segments[label] = segment_data
+                        print(f"[DEBUG] Created segment '{label}' with {len(segment_data)} records")
+            else:
+                print(f"[DEBUG] No segmentation groups provided, using unique values")
+                # Fallback to unique values
+                unique_values = data[segmentation].unique().tolist()
+                segments = {}
+                for value in unique_values:
+                    segment_data = data[data[segmentation] == value]
+                    if len(segment_data) > 0:  # Only include segments with data
+                        segments[str(value)] = segment_data
+                        print(f"[DEBUG] Created segment '{value}' with {len(segment_data)} records")
         else:
             segments = {"Overall": data}
         
-        print(f"[DEBUG] Processing {len(segments)} segments")
+        print(f"[DEBUG] Processing {len(segments)} segments: {list(segments.keys())}")
         
         # Get column labels from metadata
         column_labels = params.get("metadata", {})

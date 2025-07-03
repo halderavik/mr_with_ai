@@ -83,6 +83,9 @@ result = MyMCP().run(data, params)
     - Once mapping is confirmed (or user provides a new mapping), run your analysis using the mapped columns.
 4. **Generate visualizations:**
     - Create charts/tables as needed (e.g., using matplotlib, convert to base64 PNG).
+    - **For segmented analysis:**
+        - Return one chart/table per segment (e.g., one chart for each age group).
+        - The frontend will display these in a carousel/slider UI, allowing users to navigate between segments.
 5. **Format and return results:**
     - Return a dictionary with keys: `visualizations`, `insights`, `reply`, and `context` (see below).
 
@@ -165,13 +168,28 @@ class ExampleMCP(MCPBase):
         
         # 3. Run analysis for each segment
         results = {}
+        charts = []
+        tables = []
         for segment_name, segment_data in segments.items():
             col_map = params["column_map"]
             # ... your analysis logic here ...
-            results[segment_name] = analysis_result
+            # For each segment, generate a chart and/or table
+            chart = {
+                "type": "curve",
+                "title": f"My Chart - {segment_name}",
+                "plot_data": "<base64-png>"
+            }
+            table = {
+                "type": "summary",
+                "title": f"Summary Table - {segment_name}",
+                "data": [{"metric": "A", "value": 123}]
+            }
+            charts.append(chart)
+            tables.append(table)
+            results[segment_name] = "..."
         
         return {
-            "visualizations": {"charts": [], "tables": []},
+            "visualizations": {"charts": charts, "tables": tables},
             "insights": "Key findings and recommendations...",
             "reply": "Business-focused summary for the user...",
             "context": {
@@ -188,6 +206,9 @@ class ExampleMCP(MCPBase):
 Your `run()` method must always return a dictionary with these keys:
 - `reply`: A chat message for the user (summary, next steps, or mapping prompt).
 - `visualizations`: Dict with `charts` and/or `tables` (see below).
+    - **For segmented analysis:**
+        - Return one chart/table per segment (e.g., one chart for each age group).
+        - The frontend will display these in a carousel/slider UI, allowing users to navigate between segments.
 - `insights`: Narrative insights for the user.
 - `context`: Dict with at least `analysis_type`, `variables_used`, and mapping status.
 
@@ -197,10 +218,14 @@ Your `run()` method must always return a dictionary with these keys:
     "reply": "Here are your results...",
     "visualizations": {
         "charts": [
-            {"type": "curve", "title": "My Chart", "plot_data": "<base64-png>"}
+            {"type": "curve", "title": "My Chart - 18-24", "plot_data": "<base64-png>"},
+            {"type": "curve", "title": "My Chart - 25-34", "plot_data": "<base64-png>"},
+            ...
         ],
         "tables": [
-            {"type": "summary", "title": "Summary Table", "data": [{"metric": "A", "value": 123}]}
+            {"type": "summary", "title": "Summary Table - 18-24", "data": [{"metric": "A", "value": 123}]},
+            {"type": "summary", "title": "Summary Table - 25-34", "data": [{"metric": "A", "value": 456}]},
+            ...
         ]
     },
     "insights": "Key findings and recommendations...",
@@ -235,6 +260,7 @@ Your `run()` method must always return a dictionary with these keys:
 - **Return clear, actionable replies** for the chat agent (use LLM to polish if needed).
 - **Log debug info** for easier troubleshooting.
 - **Handle metadata gracefully** - check if fields exist before using them.
+- **For segmented analysis, return one chart/table per segment for carousel display in the frontend.**
 
 ---
 

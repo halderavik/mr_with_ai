@@ -38,6 +38,8 @@ A modern web application for analyzing market research data, with a focus on SPS
     - Automatic variable mapping with LLM assistance
     - Robust data validation and preprocessing
     - Price sensitivity calculation: (PME - PMC) / PMC * 100
+    - **Segmented analysis (e.g., by age group) is shown in a chart carousel/slider UI, with navigation arrows, dot indicators, and keyboard support.**
+    - Improved alignment and spacing for multi-segment results.
   - More analyses coming soon...
 
 - **Modern UI**
@@ -48,6 +50,7 @@ A modern web application for analyzing market research data, with a focus on SPS
   - Error handling
   - Real-time visualization updates
   - Interactive charts and tables
+  - **Carousel/slider for multi-segment results**
 
 ## Tech Stack
 
@@ -78,13 +81,15 @@ A modern web application for analyzing market research data, with a focus on SPS
   - Visualization generation
   - Results formatting
   - Pushing visualizations to frontend
+  - **For segmented analyses, MCPs return one chart/table per segment; the frontend displays these in a carousel/slider for easy navigation.**
 
 ### Visualization Pipeline
 1. MCP generates visualizations using matplotlib
 2. Visualizations are converted to base64-encoded PNG
 3. Results are sent to frontend via API
 4. Frontend displays visualizations in real-time
-5. Interactive features (zoom, pan, export) available
+5. **For segmented results, all charts are shown in a carousel/slider with navigation controls.**
+6. Interactive features (zoom, pan, export) available
 
 ## Prerequisites
 
@@ -219,3 +224,12 @@ Upload a data file for analysis.
   }
 }
 ```
+
+## How It Works
+1. **Upload Data:** User uploads a data file (SPSS, CSV, Excel). Backend extracts data and metadata.
+2. **Preview & Variable Mapping:** User previews data and metadata. When requesting analysis, the backend uses LLM to propose variable mappings based on metadata.
+3. **User Confirmation:** The system asks the user to confirm or edit the mapping via chat before running the analysis.
+4. **Run Analysis:** Once confirmed, the MCP server runs the analysis and returns results (tables, charts, insights).
+5. **Interactive Results:** Results are shown in the frontend with interactive charts, tables, and business insights. **For segmented analyses, all charts are shown in a carousel/slider for easy navigation.**
+
+---

@@ -31,6 +31,13 @@ graph TD
 - **Chat Interface:** User requests analysis, confirms variable mapping, and receives results.
 - **Interactive Results:** Displays charts, tables, and insights.
 - **Real-time Visualization:** Updates visualizations as they are pushed from MCPs.
+- **Multi-Segment Chart Carousel:**
+    - When an analysis (e.g., Van Westendorp) is segmented (e.g., by age group), the frontend displays all resulting charts in a modern carousel/slider UI.
+    - Users can navigate between charts using left/right arrows, dot indicators, or keyboard arrow keys.
+    - The chart area is vertically and horizontally centered, with improved padding and spacing for clarity.
+    - Download/export buttons are clearly aligned below the chart.
+    - Chart titles and segment labels are always visible and not cut off.
+    - The UI adapts to any number of segments (e.g., 4-5 age groups) and provides a seamless experience for multi-segment analysis.
 
 ### 2. Backend (FastAPI)
 - **API Layer:** Handles file upload, analysis requests, and chat.
@@ -120,7 +127,7 @@ sequenceDiagram
 2. **Conversion:** Plot is converted to base64-encoded PNG
 3. **Transmission:** Visualization data is sent to frontend
 4. **Display:** Frontend renders visualization in real-time
-5. **Interaction:** User can interact with visualization (zoom, pan, export)
+5. **Interaction:** User can interact with visualization (zoom, pan, export, carousel navigation for multi-segment results)
 
 ---
 
@@ -131,8 +138,8 @@ sequenceDiagram
 - **Extensibility:** Supports new file types, LLMs, and analysis modules.
 - **Data Quality:** Robust validation and filtering of input data.
 - **Performance:** Efficient processing of large datasets with metadata caching.
-- **Visualization:** Real-time updates and interactive features.
-- **Segmentation:** Automatic identification and handling of segmentation variables.
+- **Visualization:** Real-time updates and interactive features, including carousel for segmented results.
+- **Segmentation:** Automatic identification and handling of segmentation variables, with multi-segment visualization in the frontend.
 
 ---
 
@@ -154,7 +161,7 @@ sequenceDiagram
     - Generates sensitivity curves using matplotlib
     - Converts plots to base64 PNG
     - Returns results with segment-specific visualizations
-6. **Frontend displays results** (charts, tables, insights) for each age group
+6. **Frontend displays results** (charts, tables, insights) for each age group, with a carousel/slider for charts
 
 ---
 
