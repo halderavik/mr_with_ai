@@ -11,7 +11,7 @@ An MCP (Market Research Control Protocol) is a Python class that implements a sp
 - Inherit from `MCPBase` (see `backend/app/services/mcp_base.py`).
 - Set a unique `self.name`, `self.required_columns`, and `self.description` in `__init__`.
 - Implement the `run(self, data, params)` method.
-- Use the provided LLM (`chat_model`) for variable mapping and user chat.
+- **ALWAYS use the provided LLM (`chat_model`) for variable mapping** - this is mandatory.
 - Return results in the required format (see below).
 
 ### 1. Inherit from MCPBase
@@ -37,8 +37,9 @@ result = MyNewMCP().run(data, params)
 - `params`: a dict with keys like `column_map`, `column_map_confirmed`, `chat_model`, and `metadata`.
 
 #### The `run()` method must:
-1. **Propose a variable mapping** if none is confirmed:
-    - Use LLM or heuristics to suggest which columns to use for each required variable.
+1. **ALWAYS propose a variable mapping using LLM** if none is confirmed:
+    - **MANDATORY**: Use the provided `chat_model` to suggest which columns to use for each required variable.
+    - **DO NOT** use simple heuristics or column name matching - always use LLM for robust mapping.
     - Return a chat message asking the user to confirm or edit the mapping.
 2. **Wait for confirmation:**
     - If `params['column_map_confirmed']` is not `True`, return the mapping proposal and do NOT run the analysis.
@@ -52,7 +53,71 @@ result = MyNewMCP().run(data, params)
 
 ---
 
-## Example: Minimal MCP Template
+## MANDATORY: LLM-Based Variable Mapping
+
+**Variable mapping MUST be done through LLM - this is not optional.** The LLM approach provides:
+
+- **Robust matching** across different question formats and naming conventions
+- **Semantic understanding** of question content and value labels
+- **User-friendly mapping** that considers the actual meaning of variables
+- **Consistent experience** across all MCPs
+
+### LLM Mapping Template
+
+```python
+def propose_mapping_with_llm(self, metadata, chat_model, required_vars):
+    """
+    MANDATORY: Use LLM to propose variable mapping.
+    """
+    # Get comprehensive metadata for LLM
+    column_labels = metadata.get('column_labels', {})
+    value_labels = metadata.get('value_labels', {})
+    data_types = metadata.get('data_types', {})
+    unique_values = metadata.get('unique_values', {})
+    
+    # Create comprehensive prompt with all available metadata
+    prompt = f"""
+    You are a market research expert. I need to map variables for {self.name} analysis.
+    
+    REQUIRED VARIABLES: {required_vars}
+    
+    AVAILABLE DATA COLUMNS:
+    {json.dumps(column_labels, indent=2)}
+    
+    VALUE LABELS (possible answers for each question):
+    {json.dumps(value_labels, indent=2)}
+    
+    DATA TYPES:
+    {json.dumps(data_types, indent=2)}
+    
+    UNIQUE VALUES (sample of possible answers):
+    {json.dumps(unique_values, indent=2)}
+    
+    Please analyze the questions and their possible answers to map the required variables.
+    Consider the semantic meaning, not just column names.
+    
+    Reply with ONLY a JSON object mapping each required variable to the best matching column:
+    {{"var1": "column_name", "var2": "column_name"}}
+    """
+    
+    try:
+        response = chat_model.generate_reply(prompt)
+        # Clean and parse the response
+        response = response.strip()
+        if response.startswith('```json'):
+            response = response[7:]
+        if response.endswith('```'):
+            response = response[:-3]
+        response = response.strip()
+        
+        proposed_map = json.loads(response)
+        return proposed_map
+    except Exception as e:
+        # Fallback to simple mapping if LLM fails
+        return self._fallback_mapping(column_labels, required_vars)
+```
+
+### Example: Minimal MCP Template with LLM Mapping
 
 ```python
 from app.services.mcp_base import MCPBase
@@ -70,18 +135,11 @@ class ExampleMCP(MCPBase):
         metadata = params.get("metadata", {})
         chat_model = params.get("chat_model")
 
-        # 1. Propose mapping if not confirmed
+        # 1. MANDATORY: Use LLM to propose mapping if not confirmed
         if not params.get("column_map") or not params.get("column_map_confirmed", False):
-            # Use LLM to propose mapping
-            column_labels = metadata.get('column_labels', {})
-            prompt = f"""
-            Given these questions, which columns should be used for the analysis?
-            We need: x, y
-            Available questions: {json.dumps(column_labels, indent=2)}
-            Reply with JSON: {{"x": "column_name", "y": "column_name"}}
-            """
-            response = chat_model.generate_reply(prompt)
-            proposed_map = json.loads(response)
+            # ALWAYS use LLM for variable mapping
+            proposed_map = self.propose_mapping_with_llm(metadata, chat_model, self.required_columns)
+            
             return {
                 "reply": f"Please confirm the variable mapping: x: {proposed_map['x']}, y: {proposed_map['y']}",
                 "context": {
@@ -123,7 +181,7 @@ class ExampleMCP(MCPBase):
 ## Segmentation Support (Optional)
 
 If your analysis supports segmentation (e.g., by age, gender):
-- Use the LLM to find the correct segmentation variable from metadata.
+- **MANDATORY**: Use the LLM to find the correct segmentation variable from metadata.
 - Run your analysis for each segment and return a chart/table per segment.
 
 **Example:**
@@ -131,13 +189,24 @@ If your analysis supports segmentation (e.g., by age, gender):
 def handle_segmentation(self, data, params, metadata):
     question = params.get("question", "")
     if "by" in question.lower():
-        # Use LLM to find the segmentation variable
+        # MANDATORY: Use LLM to find the segmentation variable
+        column_labels = metadata.get('column_labels', {})
+        value_labels = metadata.get('value_labels', {})
+        
         prompt = f"""
-        Given these questions, which column best matches the segmentation request?
+        Given these questions and their possible answers, which column best matches the segmentation request?
+        
         Segmentation requested: {question}
-        Available questions: {json.dumps(metadata.get('column_labels', {}), indent=2)}
-        Reply with the EXACT column name.
+        
+        Available questions:
+        {json.dumps(column_labels, indent=2)}
+        
+        Value labels (possible answers):
+        {json.dumps(value_labels, indent=2)}
+        
+        Reply with ONLY the EXACT column name that best represents the segmentation variable.
         """
+        
         seg_var = params['chat_model'].generate_reply(prompt).strip()
         value_labels = metadata.get('value_labels', {}).get(seg_var, {})
         segments = {}
@@ -186,19 +255,23 @@ Your `run()` method must always return a dictionary with these keys:
 ---
 
 ## Best Practices & Tips
+- **MANDATORY: Always use LLM for variable mapping** - never use simple heuristics or column name matching.
 - **Be explicit about required variables** and check for their presence in the mapping and data.
 - **Never run analysis without user confirmation** of the mapping.
-- **Use LLM for variable matching** to handle different question formats and naming conventions.
+- **Use comprehensive metadata** in LLM prompts for better mapping accuracy.
 - **Support segmentation** when it makes sense for your analysis.
 - **Return clear, actionable replies** for the chat agent (use LLM to polish if needed).
 - **Log debug info** for easier troubleshooting.
 - **Handle metadata gracefully** - check if fields exist before using them.
 - **For segmented analysis, return one chart/table per segment for carousel display in the frontend.**
+- **Always include error handling** for LLM responses and JSON parsing.
 
 ---
 
 ## Advanced: See a Full Example
-For a full-featured MCP with segmentation, see `backend/app/mcp/van_westendorp.py`.
+For a full-featured MCP with LLM-based variable mapping and segmentation, see:
+- `backend/app/mcp/van_westendorp.py` - Van Westendorp price sensitivity analysis
+- `backend/app/mcp/choice_based_conjoint.py` - Choice-based conjoint analysis with hierarchical Bayesian estimation
 
 ---
 
@@ -206,21 +279,28 @@ For a full-featured MCP with segmentation, see `backend/app/mcp/van_westendorp.p
 **Q: Do I need to know anything about the rest of the system?**
 A: No. If you follow this interface and conversational flow, your MCP will work out of the box.
 
+**Q: Why must I use LLM for variable mapping?**
+A: LLM-based mapping provides robust semantic understanding across different question formats, naming conventions, and data structures. It ensures consistent, user-friendly variable mapping that considers the actual meaning of variables.
+
 **Q: How do I use an LLM to propose a mapping?**
-A: You will receive a `chat_model` in `params`—call `chat_model.generate_reply(prompt)` with your prompt.
+A: You will receive a `chat_model` in `params`—call `chat_model.generate_reply(prompt)` with your prompt. Always include comprehensive metadata (column labels, value labels, data types) in your prompt.
+
+**Q: What if the LLM fails to respond or returns invalid JSON?**
+A: Always include error handling and fallback mechanisms. Parse the LLM response carefully and provide a simple fallback mapping if needed.
 
 **Q: How do I generate a chart?**
 A: Use matplotlib or your preferred library, save to a PNG in memory, and base64-encode it for the `plot_data` field.
 
 **Q: How do I handle segmentation?**
-A: Use the metadata to identify segmentation variables and run your analysis separately for each segment.
+A: Use the LLM with metadata to identify segmentation variables and run your analysis separately for each segment.
 
 **Q: What metadata is available?**
-A: Column names, column labels (questions), value labels, variable labels, measurement levels, and more.
+A: Column names, column labels (questions), value labels, variable labels, measurement levels, data types, unique values, basic statistics, and more.
 
 ---
 
 ## See Also
-- Example: `van_westendorp.py` for a full-featured MCP with segmentation
+- Example: `van_westendorp.py` for a full-featured MCP with LLM-based mapping and segmentation
+- Example: `choice_based_conjoint.py` for CBC analysis with hierarchical Bayesian estimation
 - Main architecture: `ARCHITECTURE.md`
 - API/Chat flow: `README.md` 

@@ -1,0 +1,251 @@
+{
+  "columns": [
+    "RespondentID",
+    "AgeGroup",
+    "Gender",
+    "Income",
+    "Task",
+    "Alternative",
+    "Chosen",
+    "Brand",
+    "Price",
+    "Camera",
+    "Storage"
+  ],
+  "column_labels": {},
+  "value_labels": {},
+  "variable_labels": {},
+  "variable_values": {},
+  "variable_formats": {},
+  "variable_measure": {},
+  "variable_roles": {},
+  "variable_alignment": {},
+  "variable_width": {},
+  "variable_decimals": {},
+  "row_count": 2000,
+  "column_count": 11,
+  "data_types": {
+    "RespondentID": "int64",
+    "AgeGroup": "object",
+    "Gender": "object",
+    "Income": "object",
+    "Task": "int64",
+    "Alternative": "int64",
+    "Chosen": "int64",
+    "Brand": "object",
+    "Price": "object",
+    "Camera": "object",
+    "Storage": "object"
+  },
+  "missing_values": {
+    "RespondentID": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "AgeGroup": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "Gender": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "Income": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "Task": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "Alternative": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "Chosen": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "Brand": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "Price": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "Camera": {
+      "count": 0,
+      "percentage": 0.0
+    },
+    "Storage": {
+      "count": 0,
+      "percentage": 0.0
+    }
+  },
+  "unique_values": {
+    "AgeGroup": {
+      "count": 4,
+      "values": [
+        "18-24",
+        "45-54",
+        "35-44",
+        "25-34"
+      ]
+    },
+    "Gender": {
+      "count": 3,
+      "values": [
+        "Male",
+        "Female",
+        "Other"
+      ]
+    },
+    "Income": {
+      "count": 4,
+      "values": [
+        "50,001-100,000",
+        "150,001+",
+        "100,001-150,000",
+        "20,000-50,000"
+      ]
+    },
+    "Task": {
+      "count": 4,
+      "values": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "Alternative": {
+      "count": 2,
+      "values": [
+        1,
+        2
+      ]
+    },
+    "Chosen": {
+      "count": 2,
+      "values": [
+        0,
+        1
+      ]
+    },
+    "Brand": {
+      "count": 2,
+      "values": [
+        "Apple",
+        "Samsung"
+      ]
+    },
+    "Price": {
+      "count": 2,
+      "values": [
+        "$899",
+        "$699"
+      ]
+    },
+    "Camera": {
+      "count": 2,
+      "values": [
+        "Triple",
+        "Dual"
+      ]
+    },
+    "Storage": {
+      "count": 2,
+      "values": [
+        "256GB",
+        "128GB"
+      ]
+    }
+  },
+  "basic_stats": {
+    "RespondentID": {
+      "mean": 125.5,
+      "std": 72.1862551162883,
+      "min": 1.0,
+      "max": 250.0,
+      "median": 125.5,
+      "q25": 63.0,
+      "q75": 188.0
+    },
+    "AgeGroup": {
+      "mode": "18-24",
+      "mode_count": 600,
+      "unique_count": 4
+    },
+    "Gender": {
+      "mode": "Other",
+      "mode_count": 712,
+      "unique_count": 3
+    },
+    "Income": {
+      "mode": "50,001-100,000",
+      "mode_count": 536,
+      "unique_count": 4
+    },
+    "Task": {
+      "mean": 2.5,
+      "std": 1.118313602106461,
+      "min": 1.0,
+      "max": 4.0,
+      "median": 2.5,
+      "q25": 1.75,
+      "q75": 3.25
+    },
+    "Alternative": {
+      "mean": 1.5,
+      "std": 0.5001250468945398,
+      "min": 1.0,
+      "max": 2.0,
+      "median": 1.5,
+      "q25": 1.0,
+      "q75": 2.0
+    },
+    "Chosen": {
+      "mean": 0.5,
+      "std": 0.5001250468945398,
+      "min": 0.0,
+      "max": 1.0,
+      "median": 0.5,
+      "q25": 0.0,
+      "q75": 1.0
+    },
+    "Brand": {
+      "mode": "Apple",
+      "mode_count": 1044,
+      "unique_count": 2
+    },
+    "Price": {
+      "mode": "$899",
+      "mode_count": 1008,
+      "unique_count": 2
+    },
+    "Camera": {
+      "mode": "Dual",
+      "mode_count": 1023,
+      "unique_count": 2
+    },
+    "Storage": {
+      "mode": "128GB",
+      "mode_count": 1008,
+      "unique_count": 2
+    }
+  },
+  "file_type": "csv",
+  "conjoint_structure": {
+    "detected": true,
+    "structure_type": "wide_format",
+    "identified_columns": {
+      "respondent_id": "RespondentID",
+      "task_columns": [
+        "Task"
+      ],
+      "num_respondents": 250,
+      "num_tasks": 1
+    }
+  }
+}

@@ -201,6 +201,16 @@ class AgentController:
                 print("[DEBUG] Manually registered van_westendorp MCP")
             except Exception as e:
                 print(f"[ERROR] Failed to manually import van_westendorp: {e}")
+        
+        # Fallback: manually import choice_based_conjoint if not found
+        if "choice_based_conjoint" not in self.mcp_mapping:
+            print("[DEBUG] Choice-Based Conjoint MCP not found in discovery, trying manual import...")
+            try:
+                from .mcp.choice_based_conjoint import ChoiceBasedConjointMCP
+                self.mcp_mapping["choice_based_conjoint"] = ChoiceBasedConjointMCP()
+                print("[DEBUG] Manually registered choice_based_conjoint MCP")
+            except Exception as e:
+                print(f"[ERROR] Failed to manually import choice_based_conjoint: {e}")
                 
         print("[DEBUG] Final MCP mapping after fallback:", list(self.mcp_mapping.keys()))
 
@@ -647,7 +657,7 @@ class AgentController:
         prompt = (
             "Given the following user request, extract the analysis type and any filters/segmentation requested.\n"
             "Reply in JSON format with these fields:\n"
-            "- analysis_type: one of [vanwestendorp, gaborgranger, segmentation, satisfaction, unknown]\n"
+            "- analysis_type: one of [vanwestendorp, choice_based_conjoint, gaborgranger, segmentation, satisfaction, unknown]\n"
             "- filters: dict of any filters specified (e.g. {\"gender\": \"male\"})\n"
             "- segmentation: string if segmentation is requested, null otherwise\n\n"
             f"User request: {message}\n"
@@ -743,6 +753,8 @@ class AgentController:
                 return "van_westendorp"
             elif "vanwestendorp" in self.mcp_mapping:
                 return "van_westendorp"
+        if "conjoint" in lower_msg or "cbc" in lower_msg or "choice" in lower_msg:
+            return "choice_based_conjoint"
         if "gabor" in lower_msg or "granger" in lower_msg:
             return "gaborgranger"
         if "segment" in lower_msg:

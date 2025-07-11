@@ -17,6 +17,7 @@ A modern web application for analyzing market research data, with a focus on SPS
   - First 10 rows preview
   - Column headers
   - Data type detection
+  - Comprehensive metadata extraction
 
 - **Metadata Analysis**
   - SPSS metadata extraction
@@ -26,9 +27,11 @@ A modern web application for analyzing market research data, with a focus on SPS
   - Column formats
   - Column widths
   - Column alignments
+  - Data type detection and statistics
+  - Conjoint structure detection
 
 - **Advanced Analysis**
-  - Van Westendorp Price Sensitivity Analysis
+  - **Van Westendorp Price Sensitivity Analysis**
     - Point of Marginal Cheapness (PMC): Intersection of Too Cheap and Getting Expensive curves
     - Point of Marginal Expensiveness (PME): Intersection of Bargain and Too Expensive curves
     - Optimal Price Point (OPP): Intersection of Too Cheap and Too Expensive curves
@@ -40,7 +43,20 @@ A modern web application for analyzing market research data, with a focus on SPS
     - Price sensitivity calculation: (PME - PMC) / PMC * 100
     - **Segmented analysis (e.g., by age group) is shown in a chart carousel/slider UI, with navigation arrows, dot indicators, and keyboard support.**
     - Improved alignment and spacing for multi-segment results.
-  - More analyses coming soon...
+  
+  - **Choice-Based Conjoint (CBC) Analysis**
+    - Hierarchical Bayesian estimation with multiple MCMC chains
+    - Part-worth utilities for all attributes and levels
+    - Feature importance scores and rankings
+    - Market simulation with share-of-choice predictions
+    - Preference prediction for new product configurations
+    - Automatic conjoint structure detection from metadata
+    - Format-agnostic data handling (wide, stacked, long formats)
+    - LLM-powered variable mapping for robust setup
+    - Comprehensive data validation and preprocessing
+    - Interactive utility plots and importance charts
+    - Market simulation results with confidence intervals
+    - Detailed insights and pricing recommendations
 
 - **Modern UI**
   - Clean, responsive design
@@ -70,6 +86,8 @@ A modern web application for analyzing market research data, with a focus on SPS
 - SQLAlchemy
 - Pydantic
 - Matplotlib (for visualization generation)
+- PyMC (for Bayesian estimation)
+- NumPy (for numerical computations)
 
 ## Architecture
 
@@ -82,6 +100,12 @@ A modern web application for analyzing market research data, with a focus on SPS
   - Results formatting
   - Pushing visualizations to frontend
   - **For segmented analyses, MCPs return one chart/table per segment; the frontend displays these in a carousel/slider for easy navigation.**
+
+### Current MCP Servers
+- **Van Westendorp MCP**: Price sensitivity analysis with segmentation support
+- **Choice-Based Conjoint MCP**: Hierarchical Bayesian estimation with market simulations
+- **Format-Agnostic Data Handling**: Automatically detects and converts various data formats
+- **Robust Error Handling**: Comprehensive validation and user-friendly error messages
 
 ### Visualization Pipeline
 1. MCP generates visualizations using matplotlib
@@ -150,9 +174,13 @@ ai_mr_v0/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py
+│   │   ├── agent_controller.py
 │   │   ├── models/
 │   │   ├── services/
 │   │   ├── mcp/           # Market Research Control Protocol servers
+│   │   │   ├── van_westendorp.py
+│   │   │   ├── choice_based_conjoint.py
+│   │   │   └── __init__.py
 │   │   └── utils/
 │   ├── tests/
 │   └── requirements.txt
@@ -220,16 +248,70 @@ Upload a data file for analysis.
     },
     "column_alignments": {
       "column1": "left"
+    },
+    "data_types": {
+      "column1": "string"
+    },
+    "unique_values": {
+      "column1": ["value1", "value2"]
+    },
+    "basic_stats": {
+      "column1": {
+        "count": 100,
+        "mean": 5.5,
+        "std": 1.2
+      }
+    },
+    "conjoint_structure": {
+      "detected": true,
+      "attributes": ["brand", "price", "features"],
+      "levels": {
+        "brand": ["brand_a", "brand_b", "brand_c"],
+        "price": ["low", "medium", "high"]
+      }
     }
   }
 }
 ```
 
+#### 2. Analysis Run
+```http
+POST /api/analysis/run
+```
+
+Run an analysis using the specified MCP.
+
+**Request:**
+```json
+{
+  "analysis_type": "van_westendorp" | "choice_based_conjoint",
+  "dataset_id": "string",
+  "variable_mapping": {
+    "too_cheap": "column_name",
+    "getting_expensive": "column_name",
+    "too_expensive": "column_name",
+    "bargain": "column_name"
+  }
+}
+```
+
 ## How It Works
-1. **Upload Data:** User uploads a data file (SPSS, CSV, Excel). Backend extracts data and metadata.
+1. **Upload Data:** User uploads a data file (SPSS, CSV, Excel). Backend extracts data and comprehensive metadata.
 2. **Preview & Variable Mapping:** User previews data and metadata. When requesting analysis, the backend uses LLM to propose variable mappings based on metadata.
 3. **User Confirmation:** The system asks the user to confirm or edit the mapping via chat before running the analysis.
 4. **Run Analysis:** Once confirmed, the MCP server runs the analysis and returns results (tables, charts, insights).
 5. **Interactive Results:** Results are shown in the frontend with interactive charts, tables, and business insights. **For segmented analyses, all charts are shown in a carousel/slider for easy navigation.**
+
+## Supported Analysis Types
+
+### Van Westendorp Price Sensitivity
+- **Purpose**: Determine optimal pricing strategy
+- **Input**: Four price perception variables (Too Cheap, Getting Expensive, Too Expensive, Bargain)
+- **Output**: Price sensitivity curves, optimal price points, market insights
+
+### Choice-Based Conjoint
+- **Purpose**: Understand customer preferences and feature importance
+- **Input**: Choice data with product attributes and levels
+- **Output**: Part-worth utilities, importance scores, market simulations, preference predictions
 
 ---
