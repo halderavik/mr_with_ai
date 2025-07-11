@@ -411,6 +411,11 @@ class AgentController:
         """Handle follow-up questions about previous analysis results."""
         last_response = conversation_state.get('last_mcp_response', {})
         
+        # Check if last_response is valid for follow-up questions
+        if not last_response or not isinstance(last_response, dict):
+            print(f"[DEBUG] last_mcp_response is not valid for follow-up: {type(last_response)}")
+            last_response = None
+        
         # Create a safe copy of conversation state to avoid circular references
         safe_conversation_state = {}
         for key, value in conversation_state.items():
@@ -562,22 +567,17 @@ class AgentController:
             # Update conversation state with successful response
             user_id = params.get("user_id")
             
-            # Create a safe copy of the result to avoid circular references
-            safe_result = {}
-            for key, value in result.items():
-                if key in ['visualizations', 'analysis_tables', 'analysis_charts']:
-                    # Store only metadata about these objects, not the objects themselves
-                    if isinstance(value, dict):
-                        safe_result[key] = f"<{type(value).__name__} with {len(value)} items>"
-                    elif isinstance(value, list):
-                        safe_result[key] = f"<{type(value).__name__} with {len(value)} items>"
-                    else:
-                        safe_result[key] = f"<{type(value).__name__}>"
-                else:
-                    safe_result[key] = value
+            # Store the actual result for follow-up questions, but create a copy to avoid circular references
+            # We'll store the essential parts needed for follow-up questions
+            followup_result = {
+                'reply': result.get('reply'),
+                'insights': result.get('insights'),
+                'context': result.get('context'),
+                'visualizations': result.get('visualizations')
+            }
             
             self.conversation_manager.update_conversation_state(user_id, {
-                'last_mcp_response': safe_result,
+                'last_mcp_response': followup_result,
                 'pending_clarification': False,
                 'pending_plan': None
             })

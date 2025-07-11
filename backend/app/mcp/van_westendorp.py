@@ -1,23 +1,14 @@
-# backend/app/mcp/van_westendorp.py
-
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, List, Optional
 from app.services.mcp_base import MCPBase
-from app.services.plotting import fig_to_base64
 import matplotlib.pyplot as plt
-from app.utils.common import filter_dataframe
 import json
 import io
 import base64
 
 
 class VanWestendorpMCP(MCPBase):
-    """
-    Van Westendorp's Price Sensitivity Meter (PSM) implementation.
-    Analyzes price sensitivity using four key price points.
-    """
-    
     def __init__(self):
         super().__init__()
         self.name = "van_westendorp"
@@ -25,7 +16,7 @@ class VanWestendorpMCP(MCPBase):
         self.required_columns = ["too_cheap", "too_expensive", "bargain", "getting_expensive"]
         self.price_column = "price"
         self.analysis_type = "price_sensitivity"
-        
+    
     def _generate_plot(self, price_grid: np.ndarray, too_cheap: np.ndarray, 
                       too_expensive: np.ndarray, bargain: np.ndarray, 
                       getting_expensive: np.ndarray, pmc: float, pme: float, 
@@ -59,21 +50,21 @@ class VanWestendorpMCP(MCPBase):
         return base64.b64encode(buf.getvalue()).decode('utf-8')
 
     def handle_followup_question(self, question: str, analysis_result: Dict[str, Any], data: pd.DataFrame, conversation_context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        Handle follow-up questions about the Van Westendorp analysis.
+        """Handle follow-up questions about the Van Westendorp analysis."""
+        # Validate analysis_result is a dictionary
+        if not isinstance(analysis_result, dict):
+            return {
+                "answer": "I'm sorry, but I don't have the previous analysis results available. Could you please run the Van Westendorp analysis first?",
+                "context": conversation_context or {}
+            }
         
-        Args:
-            question (str): The follow-up question from the user
-            analysis_result (Dict[str, Any]): The previous analysis results
-            data (pd.DataFrame): The original dataset
-            conversation_context (Dict[str, Any]): Previous conversation context
-            
-        Returns:
-            Dict[str, Any]: Answer and updated context
-        """
         # Extract key metrics from analysis result
-        price_points = analysis_result.get("visualizations", {}).get("tables", [{}])[0].get("data", [])
-        metrics = {item["metric"]: item["value"] for item in price_points}
+        try:
+            price_points = analysis_result.get("visualizations", {}).get("tables", [{}])[0].get("data", [])
+            metrics = {item["metric"]: item["value"] for item in price_points}
+        except (KeyError, IndexError, TypeError):
+            # If we can't extract metrics, provide a general response
+            metrics = {}
         
         # Initialize context if not provided
         if conversation_context is None:
@@ -179,23 +170,7 @@ class VanWestendorpMCP(MCPBase):
         }
 
     def generate_visualizations(self, price_grid, tc_cum, te_cum, ba_cum, ge_cum, pmc, pme, opp, price_sensitivity):
-        """
-        Generate visualizations for the Van Westendorp analysis.
-        
-        Args:
-            price_grid: Array of price points
-            tc_cum: Too Cheap cumulative distribution
-            te_cum: Too Expensive cumulative distribution
-            ba_cum: Bargain cumulative distribution
-            ge_cum: Getting Expensive cumulative distribution
-            pmc: Point of Marginal Cheapness
-            pme: Point of Marginal Expensiveness
-            opp: Optimal Price Point
-            price_sensitivity: Price sensitivity percentage
-            
-        Returns:
-            Dict[str, Any]: Visualization data
-        """
+        """Generate visualizations for the Van Westendorp analysis."""
         print("[DEBUG] Starting plot generation...")
         
         # Generate the plot
@@ -285,21 +260,7 @@ class VanWestendorpMCP(MCPBase):
         return result
 
     def _process_user_request(self, question: str, metadata: Dict[str, Any], context: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Process user request to extract analysis parameters and generate follow-up questions.
-        
-        Args:
-            question (str): User's question
-            metadata (Dict[str, Any]): Dataset metadata
-            context (Optional[Dict[str, Any]]): Previous conversation context
-            params (Optional[Dict[str, Any]]): Additional parameters including chat_model
-            
-        Returns:
-            Dict containing:
-            - analysis_plan: Dict with analysis parameters
-            - followup_questions: List of questions to ask user
-            - segmentation_groups: Dict mapping segment names to their values
-        """
+        """Process user request to extract analysis parameters and generate follow-up questions."""
         try:
             print(f"[DEBUG] Processing question: {question}")
             
@@ -470,16 +431,7 @@ class VanWestendorpMCP(MCPBase):
             }
 
     def _validate_data(self, data: pd.DataFrame, column_map: Dict[str, str]) -> None:
-        """
-        Validate that the data in the mapped columns is valid for analysis.
-        
-        Args:
-            data (pd.DataFrame): Input data
-            column_map (Dict[str, str]): Mapping of required columns to actual column names
-            
-        Raises:
-            ValueError: If data validation fails
-        """
+        """Validate that the data in the mapped columns is valid for analysis."""
         for field, column in column_map.items():
             # Check if column exists
             if column not in data.columns:
@@ -499,19 +451,7 @@ class VanWestendorpMCP(MCPBase):
 
     def _calculate_curves(self, too_cheap: pd.Series, too_expensive: pd.Series, 
                          bargain: pd.Series, getting_expensive: pd.Series) -> tuple:
-        """
-        Calculate the cumulative distribution curves for Van Westendorp analysis.
-        Following the complete formula set from documentation.
-        
-        Args:
-            too_cheap: Series of "too cheap" price points
-            too_expensive: Series of "too expensive" price points
-            bargain: Series of "bargain" price points
-            getting_expensive: Series of "getting expensive" price points
-            
-        Returns:
-            tuple: (price_grid, tc_cum, te_cum, ba_cum, ge_cum)
-        """
+        """Calculate the cumulative distribution curves for Van Westendorp analysis."""
         try:
             # Convert to numeric, coercing errors to NaN
             too_cheap = pd.to_numeric(too_cheap, errors='coerce')
@@ -572,18 +512,7 @@ class VanWestendorpMCP(MCPBase):
             raise ValueError(f"Failed to calculate price curves: {str(e)}")
 
     def _find_intersection(self, x: np.ndarray, y1: np.ndarray, y2: np.ndarray) -> float:
-        """
-        Find the x-value where two curves intersect using linear interpolation.
-        Following the complete formula set from documentation.
-        
-        Args:
-            x: Array of x values (price points)
-            y1: Array of y values for first curve
-            y2: Array of y values for second curve
-            
-        Returns:
-            float: x-value of intersection or 0.0 if no intersection found
-        """
+        """Find the x-value where two curves intersect using linear interpolation."""
         try:
             # Find where the curves cross
             idx = np.argwhere(np.diff(np.signbit(y1 - y2))).flatten()
@@ -617,16 +546,7 @@ class VanWestendorpMCP(MCPBase):
             return 0.0
 
     def _clean_data(self, data: pd.DataFrame, column_map: Dict[str, str]) -> pd.DataFrame:
-        """
-        Clean the data by removing rows with missing or invalid responses.
-        
-        Args:
-            data (pd.DataFrame): Input data
-            column_map (Dict[str, str]): Mapping of required columns to actual column names
-            
-        Returns:
-            pd.DataFrame: Cleaned data with only complete responses
-        """
+        """Clean the data by removing rows with missing or invalid responses."""
         print("[DEBUG] Starting data cleaning...")
         print(f"[DEBUG] Initial data shape: {data.shape}")
         
@@ -653,17 +573,7 @@ class VanWestendorpMCP(MCPBase):
         return cleaned_data
 
     def _generate_insights(self, results: Dict[str, Any], chat_model: Any) -> str:
-        """
-        Generate insights from the Van Westendorp analysis results.
-        Following the complete formula set from documentation.
-        
-        Args:
-            results: Dictionary containing analysis results
-            chat_model: LLM model for generating insights
-            
-        Returns:
-            str: Formatted insights
-        """
+        """Generate insights from the Van Westendorp analysis results."""
         try:
             insights = []
             
@@ -730,25 +640,7 @@ class VanWestendorpMCP(MCPBase):
             return "Unable to generate detailed insights due to an error in the analysis."
 
     def run(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Process the data using Van Westendorp's Price Sensitivity Meter (PSM) methodology.
-        Following the complete formula set from documentation.
-        
-        Args:
-            data (pd.DataFrame): Input data
-            params (Dict[str, Any]): Parameters including:
-                - column_map: Optional mapping of question types to column names
-                - chat_model: LLM model for column mapping
-                - question: Optional follow-up question about the analysis
-                - conversation_context: Optional previous conversation context
-                - auto_map: Boolean indicating whether to handle mapping automatically
-                - filters: Dict of filters to apply (e.g. {"gender": "male"})
-                - segmentation: Optional segmentation parameter
-                - metadata: Dataset metadata
-                
-        Returns:
-            Dict[str, Any]: Analysis results
-        """
+        """Process the data using Van Westendorp's Price Sensitivity Meter (PSM) methodology."""
         print("\n[DEBUG] ===== Van Westendorp MCP Processing =====")
         print(f"[DEBUG] Input data shape: {data.shape}")
         
@@ -759,17 +651,30 @@ class VanWestendorpMCP(MCPBase):
             previous_result = params.get("previous_result")
             if previous_result:
                 print("[DEBUG] Found previous result, handling as follow-up question")
-                result = self.handle_followup_question(
-                    params["question"], 
-                    previous_result, 
-                    data,
-                    params.get("conversation_context")
-                )
-                return {
-                    "visualizations": previous_result.get("visualizations", {}),
-                    "insights": result["answer"],
-                    "context": result["context"]
-                }
+                print(f"[DEBUG] Previous result type: {type(previous_result)}")
+                print(f"[DEBUG] Previous result: {previous_result}")
+                
+                # Handle case where previous_result might be a string
+                if isinstance(previous_result, str):
+                    print("[DEBUG] Previous result is a string, treating as new analysis request")
+                    # If it's a string, treat it as a new analysis request
+                    previous_result = None
+                elif isinstance(previous_result, dict):
+                    # It's a proper dictionary, proceed with follow-up
+                    result = self.handle_followup_question(
+                        params["question"], 
+                        previous_result, 
+                        data,
+                        params.get("conversation_context")
+                    )
+                    return {
+                        "visualizations": previous_result.get("visualizations", {}),
+                        "insights": result["answer"],
+                        "context": result["context"]
+                    }
+                else:
+                    print(f"[DEBUG] Unexpected previous_result type: {type(previous_result)}, treating as new analysis")
+                    previous_result = None
         
         # Process user request to create analysis plan
         if params.get("question"):
@@ -996,5 +901,3 @@ class VanWestendorpMCP(MCPBase):
                 "results": results
             }
         }
-
-# Logic for Van Westendorp price sensitivity analysis 
