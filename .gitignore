@@ -57,12 +57,13 @@ log/
 .env.production.local
 
 # Uploaded files and data
-uploaded_files/
+# Note: Data files are now included in the repository
+# uploaded_files/  # Commented out to allow user_demo data files
 static/charts/
-*.sav
-*.csv
-*.xlsx
-*.xls
+# *.sav          # Commented out to allow SPSS files
+# *.csv          # Commented out to allow CSV files  
+# *.xlsx         # Commented out to allow Excel files
+# *.xls          # Commented out to allow Excel files
 
 # Testing
 .coverage
